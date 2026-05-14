@@ -2,6 +2,7 @@ import "server-only";
 
 import { getSupabase } from "./supabase";
 import { BUCKETS, classifyLineItem, isFooterText } from "@/lib/services/bid-buckets";
+import { median } from "@/lib/services/median";
 import type { BidLineItemRow, BidRow } from "./bids";
 
 export interface BucketSummary {
@@ -17,6 +18,7 @@ export interface BucketPhrasing {
   description: string;
   n: number;
   avgTotal: number;
+  medianTotal: number | null;
   minTotal: number | null;
   maxTotal: number | null;
   lastUsed: string | null;
@@ -119,6 +121,7 @@ export async function listBucketDetail(bucketName: string): Promise<BucketDetail
         entry.totals.length > 0
           ? entry.totals.reduce((a, b) => a + b, 0) / entry.totals.length
           : 0,
+      medianTotal: median(entry.totals),
       minTotal: entry.totals.length > 0 ? Math.min(...entry.totals) : null,
       maxTotal: entry.totals.length > 0 ? Math.max(...entry.totals) : null,
       lastUsed: entry.lastUsed,

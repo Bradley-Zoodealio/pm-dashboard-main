@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { fetchBucketDetail, fetchPhrasingOccurrences } from "@/lib/actions/bid-aggregates";
+import { quickAddPhrasingAction } from "@/lib/actions/bid-drafts";
 import type {
   BucketDetail,
   BucketSummary,
@@ -39,6 +40,7 @@ export function BucketGrid({ buckets }: Props) {
   const [details, setDetails] = useState<Map<string, BucketDetail>>(new Map());
   const [drawerPhrasing, setDrawerPhrasing] = useState<string | null>(null);
   const [drawerOccurrences, setDrawerOccurrences] = useState<LineItemOccurrence[]>([]);
+  const [toast, setToast] = useState<{ message: string; draftId: string } | null>(null);
   const [, startTransition] = useTransition();
 
   const q = query.trim().toLowerCase();
@@ -83,6 +85,16 @@ export function BucketGrid({ buckets }: Props) {
     } catch {
       /* no-op; clipboard may be unavailable */
     }
+  }
+
+  async function quickAdd(phrasing: string, medianCents: number | null) {
+    const result = await quickAddPhrasingAction(titleCase(phrasing), medianCents);
+    setToast({
+      message: result.createdNew
+        ? `Added to new draft "${result.draftTitle}"`
+        : `Added to draft "${result.draftTitle}"`,
+      draftId: result.draftId,
+    });
   }
 
   // When the user searches, auto-expand any bucket that has a phrasing match,
@@ -169,6 +181,7 @@ export function BucketGrid({ buckets }: Props) {
                       filter={q}
                       onOpen={openDrawer}
                       onCopy={copyPhrasing}
+                      onQuickAdd={quickAdd}
                     />
                   ) : (
                     <p className="px-4 py-3 text-xs text-muted-foreground">Loading…</p>
@@ -187,6 +200,24 @@ export function BucketGrid({ buckets }: Props) {
           onClose={() => setDrawerPhrasing(null)}
         />
       )}
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 shadow-lg">
+          <span className="text-xs">{toast.message}</span>
+          <a
+            href={`/bids/compose?draft=${toast.draftId}`}
+            className="text-xs font-medium text-primary hover:underline"
+          >
+            Open →
+          </a>
+          <button
+            type="button"
+            onClick={() => setToast(null)}
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -196,11 +227,13 @@ function PhrasingList({
   filter,
   onOpen,
   onCopy,
+  onQuickAdd,
 }: {
   detail: BucketDetail;
   filter: string;
   onOpen: (phrasing: string) => void;
   onCopy: (phrasing: string) => void;
+  onQuickAdd: (phrasing: string, medianCents: number | null) => void;
 }) {
   const rows =
     filter.length >= 2
@@ -239,6 +272,19 @@ function PhrasingList({
                 title="Copy phrasing to clipboard"
               >
                 copy
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  onQuickAdd(
+                    p.description,
+                    p.medianTotal != null ? Math.round(p.medianTotal * 100) : null,
+                  )
+                }
+                className="rounded border border-input bg-transparent px-1.5 py-0.5 text-[10px] hover:bg-accent"
+                title="Add to your most recent draft (or start one)"
+              >
+                + Compose
               </button>
             </span>
           </div>
