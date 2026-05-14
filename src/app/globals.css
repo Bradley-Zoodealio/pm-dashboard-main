@@ -48,73 +48,92 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Zoodealio brand palette
+   ───────────────────────
+   --brand-blue:  #466c9d  (wordmark, primary actions, links)
+   --brand-blue-hover:  #2d699a
+   --brand-green: #a3b231  (logo mark, accents, active highlights)
+   --brand-wheat: #f7f8ed  (hover/muted surface — Zoodealio's signature)
+   --brand-ink:   #1f2933  (body text — dark slate, not pure black)
+*/
+
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  /* Brand blue ladder — three tiers, all derived from zoodealio.com palette */
+  --brand-blue: #466c9d;            /* wordmark, headers, secondary text-links */
+  --brand-blue-strong: #2d699a;     /* hovers + emphasis */
+  --brand-blue-tint: #e8eef6;       /* muted blue surfaces */
+  --brand-blue-tint-2: #d2dceb;     /* slightly deeper blue surface */
+  --brand-green: #a3b231;
+  --brand-green-tint: #ecf0d6;
+  --brand-wheat: #f7f8ed;
+  --brand-ink: #1f2933;
+
+  --background: #f4f6fa;            /* cooler off-white — reads as "in a Zoodealio app" */
+  --foreground: var(--brand-ink);
+  --card: #ffffff;
+  --card-foreground: var(--brand-ink);
+  --popover: #ffffff;
+  --popover-foreground: var(--brand-ink);
+  --primary: var(--brand-blue);
+  --primary-foreground: #ffffff;
+  --secondary: var(--brand-blue-tint);
+  --secondary-foreground: var(--brand-blue);
+  --muted: var(--brand-blue-tint);
+  --muted-foreground: #5a6b80;
+  --accent: var(--brand-green);
+  --accent-foreground: #ffffff;
+  --destructive: #dc2626;
+  --border: #d6dde9;                /* cool light gray-blue */
+  --input: #d6dde9;
+  --ring: rgba(70, 108, 157, 0.55);
+  --chart-1: var(--brand-blue);
+  --chart-2: var(--brand-green);
+  --chart-3: #2d699a;
+  --chart-4: #6c757d;
+  --chart-5: #1f2933;
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar: #fdfdfa;
+  --sidebar-foreground: var(--brand-ink);
+  --sidebar-primary: var(--brand-blue);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--brand-wheat);
+  --sidebar-accent-foreground: var(--brand-blue);
+  --sidebar-border: #e6e7df;
+  --sidebar-ring: rgba(70, 108, 157, 0.45);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: #14181f;
+  --foreground: #e6e7df;
+  --card: #1c2129;
+  --card-foreground: #e6e7df;
+  --popover: #1c2129;
+  --popover-foreground: #e6e7df;
+  --primary: #6b8fc1;
+  --primary-foreground: #14181f;
+  --secondary: #242a33;
+  --secondary-foreground: #e6e7df;
+  --muted: #242a33;
+  --muted-foreground: #9aa3ad;
+  --accent: #b5c34a;
+  --accent-foreground: #14181f;
+  --destructive: #f87171;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.1);
+  --ring: rgba(107, 143, 193, 0.45);
+  --chart-1: #6b8fc1;
+  --chart-2: #b5c34a;
+  --chart-3: #4a8cb8;
+  --chart-4: #9aa3ad;
+  --chart-5: #e6e7df;
+  --sidebar: #14181f;
+  --sidebar-foreground: #e6e7df;
+  --sidebar-primary: #6b8fc1;
+  --sidebar-primary-foreground: #14181f;
+  --sidebar-accent: #242a33;
+  --sidebar-accent-foreground: #6b8fc1;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: rgba(107, 143, 193, 0.45);
 }
 
 @layer base {
