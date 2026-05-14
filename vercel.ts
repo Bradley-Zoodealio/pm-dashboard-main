@@ -2,7 +2,7 @@ import type { VercelConfig } from "@vercel/config/v1";
 
 export const config: VercelConfig = {
   crons: [
-    { path: "/api/cron/gmail-sync", schedule: "0 * * * *" },
+    { path: "/api/cron/gmail-sync", schedule: "0 8 * * *" },
     { path: "/api/cron/scrape-bids", schedule: "0 2 * * *" },
     { path: "/api/cron/token-health", schedule: "0 9 * * *" },
   ],
