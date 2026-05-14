@@ -159,6 +159,16 @@ export async function searchBids(query: string, limit = 40): Promise<BidSearchHi
   return Array.from(map.values()).slice(0, limit);
 }
 
+export async function listRecentBids(limit = 30): Promise<BidRow[]> {
+  const { data, error } = await getSupabase()
+    .from("bids")
+    .select("*")
+    .order("modified_at", { ascending: false, nullsFirst: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []) as BidRow[];
+}
+
 export async function listBidLineItems(bidId: string): Promise<BidLineItemRow[]> {
   const { data, error } = await getSupabase()
     .from("bid_line_items")

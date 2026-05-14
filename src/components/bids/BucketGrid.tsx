@@ -134,7 +134,7 @@ export function BucketGrid({ buckets }: Props) {
         className="h-9 rounded border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
       />
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+      <div className="flex flex-col gap-2">
         {filteredBuckets.map((bucket) => {
           const isOpen = expanded.has(bucket.name) || autoExpand.has(bucket.name);
           const detail = details.get(bucket.name);
@@ -146,31 +146,30 @@ export function BucketGrid({ buckets }: Props) {
               <button
                 type="button"
                 onClick={() => toggle(bucket.name)}
-                className="flex flex-col gap-2 px-4 py-3 text-left hover:bg-accent/40"
+                className="flex items-center gap-4 px-4 py-3 text-left hover:bg-accent/40"
               >
-                <header className="flex items-baseline justify-between gap-2">
-                  <h3 className="font-medium">{bucket.name}</h3>
-                  <span className="text-xs text-muted-foreground">
-                    {isOpen ? "▾" : "▸"}
-                  </span>
-                </header>
-                <dl className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
-                  <div>
+                <span className="w-3 shrink-0 text-xs text-muted-foreground">
+                  {isOpen ? "▾" : "▸"}
+                </span>
+                <h3 className="min-w-0 flex-1 truncate font-medium">{bucket.name}</h3>
+                <dl className="flex shrink-0 items-center gap-4 text-xs text-muted-foreground">
+                  <div className="flex items-baseline gap-1">
                     <dt className="text-[10px] uppercase tracking-wide">Items</dt>
-                    <dd className="text-sm text-foreground">{bucket.itemCount}</dd>
+                    <dd className="text-foreground">{bucket.itemCount}</dd>
                   </div>
-                  <div>
+                  <div className="flex items-baseline gap-1">
                     <dt className="text-[10px] uppercase tracking-wide">Bids</dt>
-                    <dd className="text-sm text-foreground">{bucket.bidCount}</dd>
+                    <dd className="text-foreground">{bucket.bidCount}</dd>
                   </div>
-                  <div>
-                    <dt className="text-[10px] uppercase tracking-wide">Avg / item</dt>
-                    <dd className="text-sm text-foreground">{fmtMoney(bucket.avgPerItem)}</dd>
+                  <div className="flex items-baseline gap-1">
+                    <dt className="text-[10px] uppercase tracking-wide">Avg</dt>
+                    <dd className="text-foreground tabular-nums">{fmtMoney(bucket.avgPerItem)}</dd>
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <dt className="text-[10px] uppercase tracking-wide">Total</dt>
+                    <dd className="text-foreground tabular-nums">{fmtMoney(bucket.totalSpend)}</dd>
                   </div>
                 </dl>
-                <div className="text-[11px] text-muted-foreground">
-                  Total spend: {fmtMoney(bucket.totalSpend)}
-                </div>
               </button>
 
               {isOpen && (
