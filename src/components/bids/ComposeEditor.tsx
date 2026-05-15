@@ -21,6 +21,12 @@ import type {
   BucketDetail,
   BucketSummary,
 } from "@/lib/db/bid-aggregates";
+import {
+  calculateFromSqft,
+  detectFormula,
+  rateLabel,
+  type FormulaPreset,
+} from "@/lib/formulas";
 
 interface PropertyContext {
   id: string;
@@ -442,54 +448,143 @@ function ItemRow({
   descriptionReadOnly?: boolean;
 }) {
   const [, startTransition] = useTransition();
+  const [calcOpen, setCalcOpen] = useState(false);
+
+  const formula = descriptionReadOnly ? null : detectFormula(item.description);
+
+  function applyCalc(newCents: number) {
+    setCalcOpen(false);
+    startTransition(() => onBlur({ totalCents: newCents }));
+  }
 
   return (
-    <li className="flex items-start gap-2 px-3 py-2">
-      <input
-        type="text"
-        defaultValue={item.description}
-        readOnly={descriptionReadOnly}
-        onBlur={(e) => {
-          if (descriptionReadOnly) return;
-          if (e.target.value !== item.description) {
-            startTransition(() => onBlur({ description: e.target.value }));
-          }
-        }}
-        placeholder="Description…"
-        className={
-          "flex-1 bg-transparent text-sm outline-none " +
-          (descriptionReadOnly ? "text-muted-foreground" : "focus:bg-accent/40 focus:px-1")
-        }
-      />
-      <input
-        type="text"
-        defaultValue={
-          item.total_cents == null ? "" : (item.total_cents / 100).toLocaleString()
-        }
-        onBlur={(e) => {
-          const cents = parseDollarsToCents(e.target.value);
-          if (cents !== item.total_cents) {
-            startTransition(() => onBlur({ totalCents: cents }));
-          }
-          if (cents != null) e.target.value = (cents / 100).toLocaleString();
-        }}
-        inputMode="decimal"
-        placeholder="—"
-        className="w-24 rounded border border-transparent bg-transparent px-1 text-right text-sm tabular-nums outline-none focus:border-input"
-      />
-      {!descriptionReadOnly && (
-        <button
-          type="button"
-          onClick={() => {
-            if (confirm("Remove this item?")) onRemove();
+    <li className="flex flex-col gap-1 px-3 py-2">
+      <div className="flex items-start gap-2">
+        <input
+          type="text"
+          defaultValue={item.description}
+          readOnly={descriptionReadOnly}
+          onBlur={(e) => {
+            if (descriptionReadOnly) return;
+            if (e.target.value !== item.description) {
+              startTransition(() => onBlur({ description: e.target.value }));
+            }
           }}
-          className="rounded px-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-          title="Remove"
-        >
-          ✕
-        </button>
+          placeholder="Description…"
+          className={
+            "flex-1 bg-transparent text-sm outline-none " +
+            (descriptionReadOnly ? "text-muted-foreground" : "focus:bg-accent/40 focus:px-1")
+          }
+        />
+        <input
+          type="text"
+          defaultValue={
+            item.total_cents == null ? "" : (item.total_cents / 100).toLocaleString()
+          }
+          onBlur={(e) => {
+            const cents = parseDollarsToCents(e.target.value);
+            if (cents !== item.total_cents) {
+              startTransition(() => onBlur({ totalCents: cents }));
+            }
+            if (cents != null) e.target.value = (cents / 100).toLocaleString();
+          }}
+          inputMode="decimal"
+          placeholder="—"
+          className="w-24 rounded border border-transparent bg-transparent px-1 text-right text-sm tabular-nums outline-none focus:border-input"
+        />
+        {formula && (
+          <button
+            type="button"
+            onClick={() => setCalcOpen((o) => !o)}
+            className={
+              "rounded border px-1.5 py-0.5 text-[10px] " +
+              (calcOpen
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-input text-muted-foreground hover:bg-accent")
+            }
+            title={`Calculate from sqft using ${formula.label} formula (${rateLabel(formula)})`}
+          >
+            calc
+          </button>
+        )}
+        {!descriptionReadOnly && (
+          <button
+            type="button"
+            onClick={() => {
+              if (confirm("Remove this item?")) onRemove();
+            }}
+            className="rounded px-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            title="Remove"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+      {calcOpen && formula && (
+        <SqftCalc formula={formula} onApply={applyCalc} onCancel={() => setCalcOpen(false)} />
       )}
     </li>
+  );
+}
+
+function SqftCalc({
+  formula,
+  onApply,
+  onCancel,
+}: {
+  formula: FormulaPreset;
+  onApply: (cents: number) => void;
+  onCancel: () => void;
+}) {
+  const [sqftStr, setSqftStr] = useState("");
+  const sqft = parseFloat(sqftStr.replace(/[,\s]/g, ""));
+  const isValid = Number.isFinite(sqft) && sqft > 0;
+  const total = isValid ? calculateFromSqft(formula, sqft) : 0;
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded border border-border bg-accent/30 px-3 py-2 text-xs">
+      <span className="font-medium">{formula.label}</span>
+      <span className="text-muted-foreground">
+        {rateLabel(formula)}
+        {formula.marginPct > 0 && ` (= $${formula.base.toFixed(2)} × ${1 + formula.marginPct / 100})`}
+      </span>
+      <div className="flex items-center gap-1">
+        <label className="text-muted-foreground">Sq ft:</label>
+        <input
+          type="text"
+          autoFocus
+          value={sqftStr}
+          onChange={(e) => setSqftStr(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && isValid) onApply(total * 100);
+            if (e.key === "Escape") onCancel();
+          }}
+          inputMode="decimal"
+          placeholder="1200"
+          className="h-7 w-20 rounded border border-input bg-background px-2 text-right tabular-nums outline-none focus-visible:border-ring"
+        />
+      </div>
+      <span className="text-muted-foreground">→</span>
+      <span className="font-medium tabular-nums">
+        ${total.toLocaleString()}
+      </span>
+      <div className="flex-1" />
+      <button
+        type="button"
+        onClick={() => onApply(total * 100)}
+        disabled={!isValid}
+        className="h-7 rounded-md bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+      >
+        Apply
+      </button>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="h-7 rounded-md border border-input bg-card px-2 text-[11px] text-muted-foreground hover:bg-accent"
+      >
+        Cancel
+      </button>
+    </div>
   );
 }
 
