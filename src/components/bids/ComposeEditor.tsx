@@ -526,6 +526,10 @@ function SortableItemRow(props: {
   );
 }
 
+function isPerDiemFooter(description: string, isFooter: boolean): boolean {
+  return isFooter && /\bper\s*diem\b/i.test(description);
+}
+
 function ItemRow({
   item,
   onBlur,
@@ -546,10 +550,17 @@ function ItemRow({
   const [calcOpen, setCalcOpen] = useState(false);
 
   const formula = descriptionReadOnly ? null : detectFormula(item.description);
+  const isPerDiem = isPerDiemFooter(item.description, item.is_footer);
+  const hasCalc = formula != null || isPerDiem;
 
   function applyCalc(newCents: number) {
     setCalcOpen(false);
     startTransition(() => onBlur({ totalCents: newCents }));
+  }
+
+  function applyPerDiem(newDescription: string, newCents: number) {
+    setCalcOpen(false);
+    startTransition(() => onBlur({ description: newDescription, totalCents: newCents }));
   }
 
   return (
@@ -568,6 +579,9 @@ function ItemRow({
           </button>
         )}
         <input
+          // Keying on description forces a remount when the value changes
+          // from outside (e.g. the per-diem calc rewrites the description).
+          key={`${item.id}:${item.description}`}
           type="text"
           defaultValue={item.description}
           readOnly={descriptionReadOnly}
@@ -584,6 +598,9 @@ function ItemRow({
           }
         />
         <input
+          // Same remount-on-change reason as the description input — let the
+          // calc rewrite the displayed total without controlled-input plumbing.
+          key={`${item.id}:${item.total_cents}`}
           type="text"
           defaultValue={
             item.total_cents == null ? "" : (item.total_cents / 100).toLocaleString()
@@ -599,7 +616,7 @@ function ItemRow({
           placeholder="—"
           className="w-24 rounded border border-transparent bg-transparent px-1 text-right text-sm tabular-nums outline-none focus:border-input"
         />
-        {formula && (
+        {hasCalc && (
           <button
             type="button"
             onClick={() => setCalcOpen((o) => !o)}
@@ -609,7 +626,11 @@ function ItemRow({
                 ? "border-primary bg-primary/10 text-primary"
                 : "border-input text-muted-foreground hover:bg-accent")
             }
-            title={`Calculate from sqft using ${formula.label} formula (${rateLabel(formula)})`}
+            title={
+              formula
+                ? `Calculate from sqft using ${formula.label} formula (${rateLabel(formula)})`
+                : "Calculate from daily holding cost × projected days"
+            }
           >
             calc
           </button>
@@ -629,6 +650,14 @@ function ItemRow({
       </div>
       {calcOpen && formula && (
         <SqftCalc formula={formula} onApply={applyCalc} onCancel={() => setCalcOpen(false)} />
+      )}
+      {calcOpen && isPerDiem && (
+        <PerDiemCalc
+          currentDescription={item.description}
+          currentCents={item.total_cents}
+          onApply={applyPerDiem}
+          onCancel={() => setCalcOpen(false)}
+        />
       )}
     </li>
   );
@@ -679,6 +708,126 @@ function SqftCalc({
       <button
         type="button"
         onClick={() => onApply(total * 100)}
+        disabled={!isValid}
+        className="h-7 rounded-md bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+      >
+        Apply
+      </button>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="h-7 rounded-md border border-input bg-card px-2 text-[11px] text-muted-foreground hover:bg-accent"
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}
+
+// Defaults from CLAUDE.md and historical bid corpus:
+// 30 days is the dominant wording across past bids, $79.12/day is the daily
+// rate Bradley's team has explicitly used.
+const PER_DIEM_DEFAULT_DAILY = 79.12;
+const PER_DIEM_DEFAULT_DAYS = 30;
+
+function parsePerDiemDescription(description: string): {
+  days: number | null;
+  prefix: string;
+  suffix: string;
+} {
+  // Match "30 Day Per Diem for Remodel" or "30 day per diem ..." or "*** day per diem..."
+  const m = description.match(/^(.*?)(\d+)(\s+days?\s+per\s+diem.*)$/i);
+  if (m) return { days: Number(m[2]), prefix: m[1], suffix: m[3] };
+  return { days: null, prefix: "", suffix: "" };
+}
+
+function buildPerDiemDescription(currentDescription: string, days: number): string {
+  const parsed = parsePerDiemDescription(currentDescription);
+  if (parsed.days != null) {
+    // Preserve the original casing of "day" / "Day" / "DAY" by using whatever
+    // appears in the suffix.
+    return `${parsed.prefix}${days}${parsed.suffix}`;
+  }
+  // Fallback when current description doesn't match the expected shape.
+  return `${days} Day Per Diem for Remodel`;
+}
+
+function PerDiemCalc({
+  currentDescription,
+  currentCents,
+  onApply,
+  onCancel,
+}: {
+  currentDescription: string;
+  currentCents: number | null;
+  onApply: (description: string, cents: number) => void;
+  onCancel: () => void;
+}) {
+  const parsed = parsePerDiemDescription(currentDescription);
+  const initialDays = parsed.days ?? PER_DIEM_DEFAULT_DAYS;
+  const initialDaily =
+    currentCents != null && parsed.days != null && parsed.days > 0
+      ? currentCents / 100 / parsed.days
+      : PER_DIEM_DEFAULT_DAILY;
+
+  const [dailyStr, setDailyStr] = useState(initialDaily.toFixed(2));
+  const [daysStr, setDaysStr] = useState(String(initialDays));
+
+  const daily = parseFloat(dailyStr.replace(/[$,\s]/g, ""));
+  const days = parseInt(daysStr.replace(/[,\s]/g, ""), 10);
+  const isValid = Number.isFinite(daily) && daily >= 0 && Number.isFinite(days) && days > 0;
+  const totalDollars = isValid ? Math.round(daily * days) : 0;
+  const newDescription = isValid ? buildPerDiemDescription(currentDescription, days) : "";
+
+  function submit() {
+    if (!isValid) return;
+    onApply(newDescription, totalDollars * 100);
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded border border-border bg-accent/30 px-3 py-2 text-xs">
+      <span className="font-medium">Per Diem</span>
+      <div className="flex items-center gap-1">
+        <label className="text-muted-foreground">Daily $:</label>
+        <input
+          type="text"
+          autoFocus
+          value={dailyStr}
+          onChange={(e) => setDailyStr(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+            if (e.key === "Escape") onCancel();
+          }}
+          inputMode="decimal"
+          className="h-7 w-20 rounded border border-input bg-background px-2 text-right tabular-nums outline-none focus-visible:border-ring"
+        />
+      </div>
+      <span className="text-muted-foreground">×</span>
+      <div className="flex items-center gap-1">
+        <label className="text-muted-foreground">Days:</label>
+        <input
+          type="text"
+          value={daysStr}
+          onChange={(e) => setDaysStr(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+            if (e.key === "Escape") onCancel();
+          }}
+          inputMode="numeric"
+          className="h-7 w-16 rounded border border-input bg-background px-2 text-right tabular-nums outline-none focus-visible:border-ring"
+        />
+      </div>
+      <span className="text-muted-foreground">→</span>
+      <span className="font-medium tabular-nums">${totalDollars.toLocaleString()}</span>
+      {isValid && newDescription !== currentDescription && (
+        <span className="text-[10px] text-muted-foreground">
+          ⇒ &quot;{newDescription}&quot;
+        </span>
+      )}
+      <div className="flex-1" />
+      <button
+        type="button"
+        onClick={submit}
         disabled={!isValid}
         className="h-7 rounded-md bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
       >
