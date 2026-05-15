@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { fetchBucketDetail, fetchPhrasingOccurrences } from "@/lib/actions/bid-aggregates";
+import { quickAddPhrasingAction } from "@/lib/actions/bid-drafts";
 import type {
   BucketDetail,
   BucketSummary,
@@ -39,6 +40,7 @@ export function BucketGrid({ buckets }: Props) {
   const [details, setDetails] = useState<Map<string, BucketDetail>>(new Map());
   const [drawerPhrasing, setDrawerPhrasing] = useState<string | null>(null);
   const [drawerOccurrences, setDrawerOccurrences] = useState<LineItemOccurrence[]>([]);
+  const [toast, setToast] = useState<{ message: string; draftId: string } | null>(null);
   const [, startTransition] = useTransition();
 
   const q = query.trim().toLowerCase();
@@ -85,6 +87,16 @@ export function BucketGrid({ buckets }: Props) {
     }
   }
 
+  async function quickAdd(phrasing: string, medianCents: number | null) {
+    const result = await quickAddPhrasingAction(titleCase(phrasing), medianCents);
+    setToast({
+      message: result.createdNew
+        ? `Added to new draft "${result.draftTitle}"`
+        : `Added to draft "${result.draftTitle}"`,
+      draftId: result.draftId,
+    });
+  }
+
   // When the user searches, auto-expand any bucket that has a phrasing match,
   // even if we haven't loaded its detail yet.
   const autoExpand = useMemo(() => {
@@ -122,7 +134,7 @@ export function BucketGrid({ buckets }: Props) {
         className="h-9 rounded border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
       />
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+      <div className="flex flex-col gap-2">
         {filteredBuckets.map((bucket) => {
           const isOpen = expanded.has(bucket.name) || autoExpand.has(bucket.name);
           const detail = details.get(bucket.name);
@@ -134,31 +146,30 @@ export function BucketGrid({ buckets }: Props) {
               <button
                 type="button"
                 onClick={() => toggle(bucket.name)}
-                className="flex flex-col gap-2 px-4 py-3 text-left hover:bg-accent/40"
+                className="flex items-center gap-4 px-4 py-3 text-left hover:bg-accent/40"
               >
-                <header className="flex items-baseline justify-between gap-2">
-                  <h3 className="font-medium">{bucket.name}</h3>
-                  <span className="text-xs text-muted-foreground">
-                    {isOpen ? "▾" : "▸"}
-                  </span>
-                </header>
-                <dl className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
-                  <div>
+                <span className="w-3 shrink-0 text-xs text-muted-foreground">
+                  {isOpen ? "▾" : "▸"}
+                </span>
+                <h3 className="min-w-0 flex-1 truncate font-medium">{bucket.name}</h3>
+                <dl className="flex shrink-0 items-center gap-4 text-xs text-muted-foreground">
+                  <div className="flex items-baseline gap-1">
                     <dt className="text-[10px] uppercase tracking-wide">Items</dt>
-                    <dd className="text-sm text-foreground">{bucket.itemCount}</dd>
+                    <dd className="text-foreground">{bucket.itemCount}</dd>
                   </div>
-                  <div>
+                  <div className="flex items-baseline gap-1">
                     <dt className="text-[10px] uppercase tracking-wide">Bids</dt>
-                    <dd className="text-sm text-foreground">{bucket.bidCount}</dd>
+                    <dd className="text-foreground">{bucket.bidCount}</dd>
                   </div>
-                  <div>
-                    <dt className="text-[10px] uppercase tracking-wide">Avg / item</dt>
-                    <dd className="text-sm text-foreground">{fmtMoney(bucket.avgPerItem)}</dd>
+                  <div className="flex items-baseline gap-1">
+                    <dt className="text-[10px] uppercase tracking-wide">Avg</dt>
+                    <dd className="text-foreground tabular-nums">{fmtMoney(bucket.avgPerItem)}</dd>
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <dt className="text-[10px] uppercase tracking-wide">Total</dt>
+                    <dd className="text-foreground tabular-nums">{fmtMoney(bucket.totalSpend)}</dd>
                   </div>
                 </dl>
-                <div className="text-[11px] text-muted-foreground">
-                  Total spend: {fmtMoney(bucket.totalSpend)}
-                </div>
               </button>
 
               {isOpen && (
@@ -169,6 +180,7 @@ export function BucketGrid({ buckets }: Props) {
                       filter={q}
                       onOpen={openDrawer}
                       onCopy={copyPhrasing}
+                      onQuickAdd={quickAdd}
                     />
                   ) : (
                     <p className="px-4 py-3 text-xs text-muted-foreground">Loading…</p>
@@ -187,6 +199,24 @@ export function BucketGrid({ buckets }: Props) {
           onClose={() => setDrawerPhrasing(null)}
         />
       )}
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 shadow-lg">
+          <span className="text-xs">{toast.message}</span>
+          <a
+            href={`/bids/compose?draft=${toast.draftId}`}
+            className="text-xs font-medium text-primary hover:underline"
+          >
+            Open →
+          </a>
+          <button
+            type="button"
+            onClick={() => setToast(null)}
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -196,11 +226,13 @@ function PhrasingList({
   filter,
   onOpen,
   onCopy,
+  onQuickAdd,
 }: {
   detail: BucketDetail;
   filter: string;
   onOpen: (phrasing: string) => void;
   onCopy: (phrasing: string) => void;
+  onQuickAdd: (phrasing: string, medianCents: number | null) => void;
 }) {
   const rows =
     filter.length >= 2
@@ -239,6 +271,19 @@ function PhrasingList({
                 title="Copy phrasing to clipboard"
               >
                 copy
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  onQuickAdd(
+                    p.description,
+                    p.medianTotal != null ? Math.round(p.medianTotal * 100) : null,
+                  )
+                }
+                className="rounded border border-input bg-transparent px-1.5 py-0.5 text-[10px] hover:bg-accent"
+                title="Add to your most recent draft (or start one)"
+              >
+                + Compose
               </button>
             </span>
           </div>

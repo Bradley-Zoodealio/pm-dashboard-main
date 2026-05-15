@@ -1,4 +1,10 @@
-import { searchBids, listBidLineItems, type BidSearchHit } from "@/lib/db/bids";
+import {
+  listBidLineItems,
+  listRecentBids,
+  searchBids,
+  type BidRow,
+  type BidSearchHit,
+} from "@/lib/db/bids";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +57,7 @@ export default async function BidsDocumentsPage({
       )}
 
       {query.length < 2 ? (
-        <p className="text-sm text-muted-foreground">Type at least 2 characters to search.</p>
+        <RecentBidsList />
       ) : hits.length === 0 ? (
         <p className="text-sm text-muted-foreground">No bids found for {`"${query}"`}.</p>
       ) : (
@@ -62,6 +68,55 @@ export default async function BidsDocumentsPage({
         </ul>
       )}
     </div>
+  );
+}
+
+async function RecentBidsList() {
+  const bids = await listRecentBids(30);
+  if (bids.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No bids in the library yet. Run{" "}
+        <code className="rounded bg-foreground/10 px-1">/api/admin/scrape-bids</code> to populate.
+      </p>
+    );
+  }
+  return (
+    <section className="flex flex-col gap-2">
+      <header className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Recent bids · sorted by last modified
+      </header>
+      <ul className="flex flex-col gap-2">
+        {bids.map((bid) => (
+          <RecentBidRow key={bid.id} bid={bid} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function RecentBidRow({ bid }: { bid: BidRow }) {
+  const total = bid.total_amount
+    ? `$${bid.total_amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+    : "—";
+  const modified = bid.modified_at ? new Date(bid.modified_at).toLocaleDateString() : "—";
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <a
+          href={bid.drive_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sm font-medium hover:underline"
+        >
+          {bid.address_raw ?? bid.subject ?? "Unnamed bid"} ↗
+        </a>
+        <div className="text-[11px] text-muted-foreground">
+          {bid.tab_name} · {modified} · {bid.authored_by ?? "—"}
+        </div>
+      </div>
+      <div className="text-right text-sm tabular-nums">{total}</div>
+    </li>
   );
 }
 

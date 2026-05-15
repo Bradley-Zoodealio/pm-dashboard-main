@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import {
   createCompsAction,
@@ -54,9 +55,17 @@ export function DriveTemplateButtons({
           <TemplateButton key={b.label} slug={slug} spec={b} />
         ))}
       </div>
-      <div className="mt-3">
-        <FillBidFromJson slug={slug} remodelBidUrl={remodel_bid_url} />
-      </div>
+      {remodel_bid_url && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Link
+            href={`/bids/compose?property=${slug}`}
+            className="rounded-md border border-input bg-card px-3 py-1.5 text-sm font-medium hover:bg-accent"
+          >
+            Compose Bid Draft →
+          </Link>
+          <FillBidFromJson slug={slug} remodelBidUrl={remodel_bid_url} />
+        </div>
+      )}
     </section>
   );
 }
