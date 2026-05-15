@@ -1,8 +1,10 @@
 "use client";
 
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { fetchBucketDetail, fetchPhrasingOccurrences } from "@/lib/actions/bid-aggregates";
 import { quickAddPhrasingAction } from "@/lib/actions/bid-drafts";
+import { exportPhrasingsCsvAction } from "@/lib/actions/export";
 import type {
   BucketDetail,
   BucketSummary,
@@ -35,13 +37,50 @@ interface Props {
 }
 
 export function BucketGrid({ buckets }: Props) {
-  const [query, setQuery] = useState("");
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const [query, setQuery] = useState(searchParams.get("q") ?? "");
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    const open = searchParams.get("open");
+    return new Set(open ? open.split(",").filter(Boolean) : []);
+  });
   const [details, setDetails] = useState<Map<string, BucketDetail>>(new Map());
   const [drawerPhrasing, setDrawerPhrasing] = useState<string | null>(null);
   const [drawerOccurrences, setDrawerOccurrences] = useState<LineItemOccurrence[]>([]);
   const [toast, setToast] = useState<{ message: string; draftId: string } | null>(null);
   const [, startTransition] = useTransition();
+
+  // Reflect expanded state into the URL so refresh / share links preserve the
+  // current drill-down. Uses router.replace so back-button history isn't
+  // polluted by every toggle click.
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (expanded.size > 0) params.set("open", Array.from(expanded).join(","));
+    else params.delete("open");
+    if (query.trim().length >= 2) params.set("q", query.trim());
+    else params.delete("q");
+    const qs = params.toString();
+    router.replace(qs ? `?${qs}` : "?", { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, query]);
+
+  // When the page hydrates with buckets already in `expanded` (because of a
+  // shared URL with ?open=…), eagerly load their phrasings.
+  useEffect(() => {
+    for (const key of expanded) {
+      if (key.startsWith("group:")) continue;
+      if (details.has(key)) continue;
+      startTransition(async () => {
+        const detail = await fetchBucketDetail(key);
+        setDetails((prev) => {
+          if (prev.has(key)) return prev;
+          return new Map(prev).set(key, detail);
+        });
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const q = query.trim().toLowerCase();
 
@@ -99,6 +138,19 @@ export function BucketGrid({ buckets }: Props) {
         : `Added to draft "${result.draftTitle}"`,
       draftId: result.draftId,
     });
+  }
+
+  async function downloadCsv() {
+    const csv = await exportPhrasingsCsvAction();
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `bid-library-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   // Group filtered buckets under their `group` (Kitchen, Bathroom, or own name).
@@ -173,13 +225,23 @@ export function BucketGrid({ buckets }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      <input
-        type="search"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search phrasings or category names — e.g. shaker, lvp, recaulk"
-        className="h-9 rounded border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-      />
+      <div className="flex items-center gap-2">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search phrasings or category names — e.g. shaker, lvp, recaulk"
+          className="h-9 flex-1 rounded border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+        />
+        <button
+          type="button"
+          onClick={downloadCsv}
+          className="h-9 rounded-md border border-input bg-card px-3 text-xs hover:bg-accent"
+          title="Download a CSV of every distinct phrasing with pricing stats"
+        >
+          Export CSV
+        </button>
+      </div>
 
       <div className="flex flex-col gap-2">
         {groupedFilteredBuckets.map((group) => {

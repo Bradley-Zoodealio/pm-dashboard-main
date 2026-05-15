@@ -12,6 +12,7 @@ import { DriveTemplateButtons } from "@/components/property/DriveTemplateButtons
 import { PropertyActivity } from "@/components/property/PropertyActivity";
 import { PropertyDocuments } from "@/components/property/PropertyDocuments";
 import { OfferScenarios } from "@/components/property/OfferScenarios";
+import { PropertyDrafts } from "@/components/property/PropertyDrafts";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +74,7 @@ export default async function PropertyPage({
         remodel_bid_url={property.remodel_bid_url}
         project_tracker_url={property.project_tracker_url}
       />
+      <PropertyDrafts propertyId={property.id} propertySlug={property.slug} />
       <PropertyLinks property={property} />
       <PropertyDocuments property={property} />
       <PropertyActivity questionnaireUrl={property.questionnaire_url} />
