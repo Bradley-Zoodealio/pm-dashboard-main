@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { listDrafts } from "@/lib/db/bid-drafts";
-import { createDraftAction } from "@/lib/actions/bid-drafts";
+import { listActiveProperties } from "@/lib/db/properties";
+import { NewDraftButton } from "@/components/bids/NewDraftButton";
 
 export const dynamic = "force-dynamic";
 
@@ -22,12 +22,6 @@ function formatRelativeDate(iso: string): string {
   return d.toLocaleDateString();
 }
 
-async function createBlankDraft() {
-  "use server";
-  const { draftId } = await createDraftAction({});
-  redirect(`/bids/compose?draft=${draftId}`);
-}
-
 export default async function BidsDraftsPage({
   searchParams,
 }: {
@@ -35,19 +29,23 @@ export default async function BidsDraftsPage({
 }) {
   const { archived } = await searchParams;
   const showArchived = archived === "1";
-  const drafts = await listDrafts({ includeArchived: showArchived });
+  const [drafts, properties] = await Promise.all([
+    listDrafts({ includeArchived: showArchived }),
+    listActiveProperties(),
+  ]);
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <form action={createBlankDraft}>
-          <button
-            type="submit"
-            className="h-9 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
-          >
-            + New blank draft
-          </button>
-        </form>
+        <NewDraftButton
+          properties={properties.map((p) => ({
+            id: p.id,
+            slug: p.slug,
+            address: p.address,
+            stage: p.stage,
+            assignee: p.assignee,
+          }))}
+        />
         <Link
           href={showArchived ? "/bids/drafts" : "/bids/drafts?archived=1"}
           className="text-xs text-muted-foreground hover:underline"

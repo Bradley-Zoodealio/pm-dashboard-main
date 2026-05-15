@@ -1,12 +1,19 @@
 import "server-only";
 
 import { getSupabase } from "./supabase";
-import { BUCKETS, classifyLineItem, isFooterText } from "@/lib/services/bid-buckets";
+import {
+  BUCKETS,
+  classifyLineItem,
+  isFooterText,
+  type BucketArea,
+} from "@/lib/services/bid-buckets";
 import { median } from "@/lib/services/median";
 import type { BidLineItemRow, BidRow } from "./bids";
 
 export interface BucketSummary {
   name: string;
+  group: string;
+  area: BucketArea;
   itemCount: number;
   bidCount: number;
   totalSpend: number;
@@ -78,6 +85,8 @@ export async function listBucketSummaries(): Promise<BucketSummary[]> {
     const totalSpend = entry.prices.reduce((sum, p) => sum + p, 0);
     return {
       name: b.name,
+      group: b.group ?? b.name,
+      area: b.area,
       itemCount: entry.items,
       bidCount: entry.bids.size,
       totalSpend,
@@ -91,8 +100,11 @@ export async function listBucketDetail(bucketName: string): Promise<BucketDetail
   const items = await loadClassifiableItems();
   const bucketItems = items.filter((it) => classifyLineItem(it.description) === bucketName);
 
+  const bucketDef = BUCKETS.find((b) => b.name === bucketName);
   const summary: BucketSummary = {
     name: bucketName,
+    group: bucketDef?.group ?? bucketName,
+    area: bucketDef?.area ?? "misc",
     itemCount: bucketItems.length,
     bidCount: new Set(bucketItems.map((i) => i.bidId)).size,
     totalSpend: bucketItems.reduce((s, i) => s + (i.total ?? 0), 0),

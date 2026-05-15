@@ -49,6 +49,21 @@ export async function listProperties(): Promise<PropertyRow[]> {
   return (data ?? []) as PropertyRow[];
 }
 
+// Active properties suitable for tying a fresh bid draft to. Excludes
+// ready-for-listing (renovation already done) since you don't compose new
+// bids for a property that's gone to market.
+export async function listActiveProperties(): Promise<
+  Array<Pick<PropertyRow, "id" | "slug" | "address" | "stage" | "assignee">>
+> {
+  const { data, error } = await getSupabase()
+    .from("properties")
+    .select("id, slug, address, stage, assignee")
+    .neq("stage", "ready-for-listing")
+    .order("inspect_date", { ascending: false, nullsFirst: true });
+  if (error) throw error;
+  return (data ?? []) as Array<Pick<PropertyRow, "id" | "slug" | "address" | "stage" | "assignee">>;
+}
+
 export async function getPropertyBySlug(slug: string): Promise<PropertyRow | null> {
   const { data, error } = await getSupabase()
     .from("properties")

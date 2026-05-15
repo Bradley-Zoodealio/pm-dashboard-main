@@ -34,8 +34,22 @@ interface Props {
   buckets: BucketSummary[];
 }
 
+type AreaFilter = "all" | "kitchen" | "bathroom" | "interior" | "mechanical" | "exterior" | "demo" | "misc";
+
+const AREA_CHIPS: Array<{ value: AreaFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "kitchen", label: "Kitchen" },
+  { value: "bathroom", label: "Bathroom" },
+  { value: "interior", label: "Interior" },
+  { value: "mechanical", label: "Mechanical" },
+  { value: "exterior", label: "Exterior" },
+  { value: "demo", label: "Demo" },
+  { value: "misc", label: "Misc" },
+];
+
 export function BucketGrid({ buckets }: Props) {
   const [query, setQuery] = useState("");
+  const [areaFilter, setAreaFilter] = useState<AreaFilter>("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [details, setDetails] = useState<Map<string, BucketDetail>>(new Map());
   const [drawerPhrasing, setDrawerPhrasing] = useState<string | null>(null);
@@ -44,30 +58,46 @@ export function BucketGrid({ buckets }: Props) {
   const [, startTransition] = useTransition();
 
   const q = query.trim().toLowerCase();
-  const filteredBuckets = useMemo(() => {
-    if (q.length < 2) return buckets;
-    return buckets.filter((b) => {
-      if (b.name.toLowerCase().includes(q)) return true;
-      const detail = details.get(b.name);
-      if (!detail) return false;
-      return detail.phrasings.some((p) => p.description.includes(q));
-    });
-  }, [buckets, q, details]);
 
-  function toggle(bucketName: string) {
+  // Counts per area for chip badges.
+  const areaCounts = useMemo(() => {
+    const m: Record<string, number> = { all: buckets.length };
+    for (const b of buckets) m[b.area] = (m[b.area] ?? 0) + 1;
+    return m;
+  }, [buckets]);
+
+  const filteredBuckets = useMemo(() => {
+    let result = buckets;
+    if (areaFilter !== "all") {
+      result = result.filter((b) => b.area === areaFilter);
+    }
+    if (q.length >= 2) {
+      result = result.filter((b) => {
+        if (b.name.toLowerCase().includes(q)) return true;
+        const detail = details.get(b.name);
+        if (!detail) return false;
+        return detail.phrasings.some((p) => p.description.includes(q));
+      });
+    }
+    return result;
+  }, [buckets, areaFilter, q, details]);
+
+  function toggle(expandKey: string, detailBucketName?: string | null) {
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(bucketName)) {
-        next.delete(bucketName);
+      if (next.has(expandKey)) {
+        next.delete(expandKey);
         return next;
       }
-      next.add(bucketName);
+      next.add(expandKey);
       return next;
     });
-    if (!details.has(bucketName)) {
+    // Some toggles are for parent group headers (multi-member groups) — those
+    // don't have a bucket to fetch detail for.
+    if (detailBucketName && !details.has(detailBucketName)) {
       startTransition(async () => {
-        const detail = await fetchBucketDetail(bucketName);
-        setDetails((prev) => new Map(prev).set(bucketName, detail));
+        const detail = await fetchBucketDetail(detailBucketName);
+        setDetails((prev) => new Map(prev).set(detailBucketName, detail));
       });
     }
   }
@@ -96,6 +126,49 @@ export function BucketGrid({ buckets }: Props) {
       draftId: result.draftId,
     });
   }
+
+  // Group filtered buckets under their `group` (Kitchen, Bathroom, or own name).
+  // Members within each group are sorted by total spend desc to surface the
+  // most relevant categories first when the group is expanded.
+  const groupedFilteredBuckets = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        name: string;
+        members: BucketSummary[];
+        itemCount: number;
+        bidCount: number;
+        totalSpend: number;
+        avgPerItem: number;
+      }
+    >();
+    for (const b of filteredBuckets) {
+      const key = b.group;
+      if (!map.has(key)) {
+        map.set(key, {
+          name: key,
+          members: [],
+          itemCount: 0,
+          bidCount: 0,
+          totalSpend: 0,
+          avgPerItem: 0,
+        });
+      }
+      const g = map.get(key)!;
+      g.members.push(b);
+      g.itemCount += b.itemCount;
+      // bidCount across members is best-effort: sum of per-bucket bidCount may
+      // double-count bids that span multiple member buckets (rare in practice).
+      g.bidCount += b.bidCount;
+      g.totalSpend += b.totalSpend;
+    }
+    const groups = Array.from(map.values()).map((g) => ({
+      ...g,
+      members: g.members.slice().sort((a, b) => b.totalSpend - a.totalSpend),
+      avgPerItem: g.itemCount > 0 ? g.totalSpend / g.itemCount : 0,
+    }));
+    return groups.sort((a, b) => b.totalSpend - a.totalSpend);
+  }, [filteredBuckets]);
 
   // When the user searches, auto-expand any bucket that has a phrasing match,
   // even if we haven't loaded its detail yet.
@@ -134,45 +207,83 @@ export function BucketGrid({ buckets }: Props) {
         className="h-9 rounded border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
       />
 
+      <div className="flex flex-wrap gap-1">
+        {AREA_CHIPS.map((chip) => {
+          const count = areaCounts[chip.value] ?? 0;
+          if (chip.value !== "all" && count === 0) return null;
+          const active = areaFilter === chip.value;
+          return (
+            <button
+              key={chip.value}
+              type="button"
+              onClick={() => setAreaFilter(chip.value)}
+              className={
+                "rounded-full border px-3 py-1 text-xs font-medium transition-colors " +
+                (active
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-input bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground")
+              }
+            >
+              {chip.label}
+              <span className="ml-1.5 text-[10px] opacity-70">{count}</span>
+            </button>
+          );
+        })}
+      </div>
+
       <div className="flex flex-col gap-2">
-        {filteredBuckets.map((bucket) => {
-          const isOpen = expanded.has(bucket.name) || autoExpand.has(bucket.name);
-          const detail = details.get(bucket.name);
+        {groupedFilteredBuckets.map((group) => {
+          const isSingle = group.members.length === 1;
+          const singleBucket = isSingle ? group.members[0] : null;
+          // For single-member groups, the group expand IS the bucket expand —
+          // we use the bucket name as the toggle key so the user gets one click
+          // straight to phrasings.
+          const expandKey = singleBucket?.name ?? `group:${group.name}`;
+          const isOpen = expanded.has(expandKey) || (singleBucket != null && autoExpand.has(singleBucket.name));
+          const detail = singleBucket ? details.get(singleBucket.name) : null;
+
           return (
             <article
-              key={bucket.name}
+              key={group.name}
               className="flex flex-col rounded-lg border border-border bg-card"
             >
               <button
                 type="button"
-                onClick={() => toggle(bucket.name)}
+                onClick={() => toggle(expandKey, singleBucket?.name)}
                 className="flex items-center gap-4 px-4 py-3 text-left hover:bg-accent/40"
               >
                 <span className="w-3 shrink-0 text-xs text-muted-foreground">
                   {isOpen ? "▾" : "▸"}
                 </span>
-                <h3 className="min-w-0 flex-1 truncate font-medium">{bucket.name}</h3>
+                <div className="flex min-w-0 flex-1 items-baseline gap-2">
+                  <h3 className="truncate font-medium">{group.name}</h3>
+                  {!isSingle && (
+                    <span className="text-[10px] text-muted-foreground">
+                      {group.members.length} categories
+                    </span>
+                  )}
+                </div>
                 <dl className="flex shrink-0 items-center gap-4 text-xs text-muted-foreground">
                   <div className="flex items-baseline gap-1">
                     <dt className="text-[10px] uppercase tracking-wide">Items</dt>
-                    <dd className="text-foreground">{bucket.itemCount}</dd>
+                    <dd className="text-foreground">{group.itemCount}</dd>
                   </div>
                   <div className="flex items-baseline gap-1">
                     <dt className="text-[10px] uppercase tracking-wide">Bids</dt>
-                    <dd className="text-foreground">{bucket.bidCount}</dd>
+                    <dd className="text-foreground">{group.bidCount}</dd>
                   </div>
                   <div className="flex items-baseline gap-1">
                     <dt className="text-[10px] uppercase tracking-wide">Avg</dt>
-                    <dd className="text-foreground tabular-nums">{fmtMoney(bucket.avgPerItem)}</dd>
+                    <dd className="text-foreground tabular-nums">{fmtMoney(group.avgPerItem)}</dd>
                   </div>
                   <div className="flex items-baseline gap-1">
                     <dt className="text-[10px] uppercase tracking-wide">Total</dt>
-                    <dd className="text-foreground tabular-nums">{fmtMoney(bucket.totalSpend)}</dd>
+                    <dd className="text-foreground tabular-nums">{fmtMoney(group.totalSpend)}</dd>
                   </div>
                 </dl>
               </button>
 
-              {isOpen && (
+              {isOpen && isSingle && singleBucket && (
                 <div className="border-t border-border">
                   {detail ? (
                     <PhrasingList
@@ -186,6 +297,49 @@ export function BucketGrid({ buckets }: Props) {
                     <p className="px-4 py-3 text-xs text-muted-foreground">Loading…</p>
                   )}
                 </div>
+              )}
+
+              {isOpen && !isSingle && (
+                <ul className="flex flex-col divide-y divide-border border-t border-border">
+                  {group.members.map((member) => {
+                    const memberOpen =
+                      expanded.has(member.name) || autoExpand.has(member.name);
+                    const memberDetail = details.get(member.name);
+                    return (
+                      <li key={member.name} className="flex flex-col">
+                        <button
+                          type="button"
+                          onClick={() => toggle(member.name, member.name)}
+                          className="flex items-center gap-3 bg-accent/10 px-6 py-2 text-left hover:bg-accent/40"
+                        >
+                          <span className="w-3 shrink-0 text-[10px] text-muted-foreground">
+                            {memberOpen ? "▾" : "▸"}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-sm">{member.name}</span>
+                          <span className="shrink-0 text-[10px] text-muted-foreground">
+                            n={member.itemCount} · avg {fmtMoney(member.avgPerItem)} · total{" "}
+                            {fmtMoney(member.totalSpend)}
+                          </span>
+                        </button>
+                        {memberOpen && (
+                          <div>
+                            {memberDetail ? (
+                              <PhrasingList
+                                detail={memberDetail}
+                                filter={q}
+                                onOpen={openDrawer}
+                                onCopy={copyPhrasing}
+                                onQuickAdd={quickAdd}
+                              />
+                            ) : (
+                              <p className="px-6 py-3 text-xs text-muted-foreground">Loading…</p>
+                            )}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
               )}
             </article>
           );

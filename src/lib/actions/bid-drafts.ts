@@ -25,14 +25,9 @@ import {
 } from "@/lib/google/sheets";
 import { getDraftWithItems } from "@/lib/db/bid-drafts";
 
-function defaultDraftTitle(propertyAddress: string | null): string {
-  if (propertyAddress) return propertyAddress;
-  const today = new Date().toISOString().slice(0, 10);
-  return `Standalone draft · ${today}`;
-}
-
 export async function createDraftAction(input: {
   propertySlug?: string | null;
+  title?: string;
   tier?: DraftTier;
 }): Promise<{ draftId: string }> {
   let propertyId: string | null = null;
@@ -42,9 +37,18 @@ export async function createDraftAction(input: {
     const property = await getPropertyBySlug(input.propertySlug);
     if (!property) throw new Error(`Property "${input.propertySlug}" not found`);
     propertyId = property.id;
-    title = defaultDraftTitle(property.address);
+    // For property-tied drafts, the address is always the right title unless
+    // the caller explicitly overrides.
+    title = input.title?.trim() || property.address;
   } else {
-    title = defaultDraftTitle(null);
+    // Generic drafts MUST be given a title up front. No auto-generated
+    // "Standalone draft · DATE" — those just become clutter the user has
+    // to rename later.
+    const trimmed = input.title?.trim() ?? "";
+    if (!trimmed) {
+      throw new Error("A generic draft needs a title. Pass a non-empty `title` or a `propertySlug`.");
+    }
+    title = trimmed;
   }
 
   const draft = await createDraft({
