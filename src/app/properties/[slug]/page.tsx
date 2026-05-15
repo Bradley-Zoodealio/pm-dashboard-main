@@ -69,7 +69,6 @@ export default async function PropertyPage({
       />
       <DriveTemplateButtons
         slug={property.slug}
-        stage={property.stage}
         comps_url={property.comps_url}
         remodel_bid_url={property.remodel_bid_url}
         project_tracker_url={property.project_tracker_url}
