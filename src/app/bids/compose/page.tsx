@@ -1,9 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createDraft, getDraftWithItems, listDrafts } from "@/lib/db/bid-drafts";
-import { getPropertyBySlug } from "@/lib/db/properties";
+import { getPropertyBySlug, listActiveProperties } from "@/lib/db/properties";
 import { listBucketSummaries } from "@/lib/db/bid-aggregates";
 import { ComposeEditor } from "@/components/bids/ComposeEditor";
+import {
+  NewDraftButton,
+  type DraftEligibleProperty,
+} from "@/components/bids/NewDraftButton";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +24,7 @@ export default async function ComposePage({
     if (propertySlug) {
       const property = await getPropertyBySlug(propertySlug);
       if (!property) {
-        return <ComposeEmptyState notFoundId={`property ${propertySlug}`} />;
+        return <ComposeEmptyState notFoundId={`property ${propertySlug}`} properties={[]} />;
       }
       const newDraft = await createDraft({
         propertyId: property.id,
@@ -28,12 +32,35 @@ export default async function ComposePage({
       });
       redirect(`/bids/compose?draft=${newDraft.id}&property=${propertySlug}`);
     }
-    return <ComposeEmptyState />;
+    const activeProperties = await listActiveProperties();
+    return (
+      <ComposeEmptyState
+        properties={activeProperties.map((p) => ({
+          id: p.id,
+          slug: p.slug,
+          address: p.address,
+          stage: p.stage,
+          assignee: p.assignee,
+        }))}
+      />
+    );
   }
 
   const draft = await getDraftWithItems(draftId);
   if (!draft) {
-    return <ComposeEmptyState notFoundId={draftId} />;
+    const activeProperties = await listActiveProperties();
+    return (
+      <ComposeEmptyState
+        notFoundId={draftId}
+        properties={activeProperties.map((p) => ({
+          id: p.id,
+          slug: p.slug,
+          address: p.address,
+          stage: p.stage,
+          assignee: p.assignee,
+        }))}
+      />
+    );
   }
 
   const property =
@@ -80,14 +107,13 @@ export default async function ComposePage({
   );
 }
 
-function ComposeEmptyState({ notFoundId }: { notFoundId?: string }) {
-  async function startNew() {
-    "use server";
-    const { createDraftAction } = await import("@/lib/actions/bid-drafts");
-    const { draftId } = await createDraftAction({});
-    redirect(`/bids/compose?draft=${draftId}`);
-  }
-
+function ComposeEmptyState({
+  notFoundId,
+  properties,
+}: {
+  notFoundId?: string;
+  properties: DraftEligibleProperty[];
+}) {
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-4 p-6">
       <nav className="text-sm text-muted-foreground">
@@ -107,17 +133,12 @@ function ComposeEmptyState({ notFoundId }: { notFoundId?: string }) {
           Draft <code>{notFoundId}</code> was not found. It may have been deleted.
         </div>
       )}
-      <form action={startNew}>
-        <button
-          type="submit"
-          className="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
-        >
-          + New blank draft
-        </button>
-      </form>
+      <div>
+        <NewDraftButton properties={properties} />
+      </div>
       <p className="text-xs text-muted-foreground">
-        To compose for a specific property, open it from the board and click{" "}
-        <span className="font-medium">Compose Bid Draft</span>.
+        Pick an active property to tie the draft to its address and CLR, or start a generic
+        draft with your own title.
       </p>
     </main>
   );
