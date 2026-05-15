@@ -2,12 +2,28 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   addDraftItemAction,
   archiveDraftAction,
   duplicateAsOption2Action,
   removeDraftItemAction,
+  reorderDraftItemsAction,
   sendDraftToSheetAction,
   updateDraftItemAction,
   updateDraftTitleAction,
@@ -79,6 +95,18 @@ export function ComposeEditor({ initialDraft, property, buckets, recentDrafts }:
   const [picker, setPicker] = useState<{ filter: string }>({ filter: "" });
   const [sending, setSending] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  // dnd-kit assigns sequential IDs to its accessibility announcer which
+  // diverges between SSR and the first client render, so hold off on
+  // mounting the DnD wrapper until after hydration. Same pattern as BoardDnd.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMounted(true);
+  }, []);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
 
   const nonFooterItems = draft.items.filter((i) => !i.is_footer);
   const footerItems = draft.items.filter((i) => i.is_footer);
@@ -190,6 +218,27 @@ export function ComposeEditor({ initialDraft, property, buckets, recentDrafts }:
   async function handleDuplicate() {
     const { draftId: newId } = await duplicateAsOption2Action(draft.id);
     router.push(`/bids/compose?draft=${newId}`);
+  }
+
+  function handleDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const oldIdx = nonFooterItems.findIndex((i) => i.id === active.id);
+    const newIdx = nonFooterItems.findIndex((i) => i.id === over.id);
+    if (oldIdx < 0 || newIdx < 0) return;
+    const reordered = arrayMove(nonFooterItems, oldIdx, newIdx);
+    // Footer rows keep their positions (1000+); scope rows get 1..N.
+    const updated = reordered.map((it, idx) => ({ ...it, position: idx + 1 }));
+    setDraft((prev) => ({
+      ...prev,
+      items: [...updated, ...prev.items.filter((i) => i.is_footer)],
+    }));
+    startTransition(() => {
+      reorderDraftItemsAction(
+        draft.id,
+        updated.map((i) => i.id),
+      );
+    });
   }
 
   // ── Bucket picker (left rail) ────────────────────────────────────────────
@@ -361,6 +410,28 @@ export function ComposeEditor({ initialDraft, property, buckets, recentDrafts }:
                 No items yet. Add from the library on the left, or click{" "}
                 <span className="font-medium">+ Custom line item</span>.
               </p>
+            ) : mounted ? (
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext
+                  items={nonFooterItems.map((i) => i.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <ul className="divide-y divide-border">
+                    {nonFooterItems.map((it) => (
+                      <SortableItemRow
+                        key={it.id}
+                        item={it}
+                        onBlur={(patch) => handleItemBlur(it, patch)}
+                        onRemove={() => handleRemove(it.id)}
+                      />
+                    ))}
+                  </ul>
+                </SortableContext>
+              </DndContext>
             ) : (
               <ul className="divide-y divide-border">
                 {nonFooterItems.map((it) => (
@@ -436,16 +507,40 @@ export function ComposeEditor({ initialDraft, property, buckets, recentDrafts }:
   );
 }
 
+function SortableItemRow(props: {
+  item: BidDraftItemRow;
+  onBlur: (patch: { description?: string; totalCents?: number | null }) => void;
+  onRemove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: props.item.id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+  return (
+    <div ref={setNodeRef} style={style}>
+      <ItemRow {...props} dragHandle={{ attributes, listeners }} />
+    </div>
+  );
+}
+
 function ItemRow({
   item,
   onBlur,
   onRemove,
   descriptionReadOnly = false,
+  dragHandle,
 }: {
   item: BidDraftItemRow;
   onBlur: (patch: { description?: string; totalCents?: number | null }) => void;
   onRemove: () => void;
   descriptionReadOnly?: boolean;
+  dragHandle?: {
+    attributes: ReturnType<typeof useSortable>["attributes"];
+    listeners: ReturnType<typeof useSortable>["listeners"];
+  };
 }) {
   const [, startTransition] = useTransition();
   const [calcOpen, setCalcOpen] = useState(false);
@@ -460,6 +555,18 @@ function ItemRow({
   return (
     <li className="flex flex-col gap-1 px-3 py-2">
       <div className="flex items-start gap-2">
+        {dragHandle && (
+          <button
+            type="button"
+            {...dragHandle.attributes}
+            {...dragHandle.listeners}
+            className="cursor-grab select-none px-1 text-muted-foreground hover:text-foreground active:cursor-grabbing"
+            title="Drag to reorder"
+            aria-label="Drag to reorder"
+          >
+            ⋮⋮
+          </button>
+        )}
         <input
           type="text"
           defaultValue={item.description}
