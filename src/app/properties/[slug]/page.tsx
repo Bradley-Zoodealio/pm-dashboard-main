@@ -12,6 +12,7 @@ import { DriveTemplateButtons } from "@/components/property/DriveTemplateButtons
 import { PropertyActivity } from "@/components/property/PropertyActivity";
 import { PropertyDocuments } from "@/components/property/PropertyDocuments";
 import { OfferScenarios } from "@/components/property/OfferScenarios";
+import { PropertyDrafts } from "@/components/property/PropertyDrafts";
 
 export const dynamic = "force-dynamic";
 
@@ -68,11 +69,11 @@ export default async function PropertyPage({
       />
       <DriveTemplateButtons
         slug={property.slug}
-        stage={property.stage}
         comps_url={property.comps_url}
         remodel_bid_url={property.remodel_bid_url}
         project_tracker_url={property.project_tracker_url}
       />
+      <PropertyDrafts propertyId={property.id} propertySlug={property.slug} />
       <PropertyLinks property={property} />
       <PropertyDocuments property={property} />
       <PropertyActivity questionnaireUrl={property.questionnaire_url} />
@@ -168,6 +169,8 @@ function PropertyFields({ property }: { property: PropertyRow }) {
 }
 
 function PropertyLinks({ property }: { property: PropertyRow }) {
+  // Project tracker lives in the Drive section above with the other
+  // template buttons, so it's intentionally not in this list.
   const links: Array<{ label: string; field: string; url: string | null }> = [
     { label: "Inspection report", field: "inspect_url", url: property.inspect_url },
     { label: "Redfin", field: "redfin_url", url: property.redfin_url },
@@ -175,43 +178,78 @@ function PropertyLinks({ property }: { property: PropertyRow }) {
     { label: "Comps sheet", field: "comps_url", url: property.comps_url },
     { label: "Questionnaire", field: "questionnaire_url", url: property.questionnaire_url },
     { label: "Remodel bid", field: "remodel_bid_url", url: property.remodel_bid_url },
-    { label: "Project tracker", field: "project_tracker_url", url: property.project_tracker_url },
   ];
 
   return (
     <section className="rounded-lg border border-border bg-card p-4">
-      <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">
+      <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted-foreground">
         Links
       </h2>
-      <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
+      <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {links.map((l) => (
-          <div key={l.field} className="contents">
-            <dt className="text-muted-foreground">{l.label}</dt>
-            <dd className="flex items-center gap-2">
-              {l.url && (
-                <a
-                  href={l.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary hover:underline"
-                >
-                  open ↗
-                </a>
-              )}
-              <InlineEditField
-                slug={property.slug}
-                field={l.field}
-                displayValue={l.url ?? ""}
-                inputValue={l.url ?? ""}
-                type="url"
-                inputMode="url"
-                placeholder="add URL"
-              />
-            </dd>
-          </div>
+          <li key={l.field}>
+            <LinkPill slug={property.slug} label={l.label} field={l.field} url={l.url} />
+          </li>
         ))}
-      </dl>
+      </ul>
     </section>
+  );
+}
+
+function LinkPill({
+  slug,
+  label,
+  field,
+  url,
+}: {
+  slug: string;
+  label: string;
+  field: string;
+  url: string | null;
+}) {
+  if (!url) {
+    // Empty slot: render the inline editor so a single click starts adding a URL.
+    return (
+      <div className="flex items-center gap-2 rounded-md border border-dashed border-border bg-card px-3 py-2 text-sm">
+        <span className="shrink-0 text-muted-foreground">{label}</span>
+        <span className="min-w-0 flex-1 text-muted-foreground">
+          <InlineEditField
+            slug={slug}
+            field={field}
+            displayValue=""
+            inputValue=""
+            type="url"
+            inputMode="url"
+            placeholder="add URL"
+          />
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="group flex items-center rounded-md border border-input bg-card transition-colors hover:border-primary/50 hover:bg-accent/40">
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex flex-1 items-center gap-2 px-3 py-2 text-sm font-medium"
+      >
+        <span>{label}</span>
+        <span className="text-xs text-muted-foreground">↗</span>
+      </a>
+      <div className="border-l border-border px-2 py-2 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        <InlineEditField
+          slug={slug}
+          field={field}
+          displayValue="edit"
+          inputValue={url}
+          type="url"
+          inputMode="url"
+          placeholder="—"
+        />
+      </div>
+    </div>
   );
 }
 

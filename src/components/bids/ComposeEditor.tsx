@@ -92,6 +92,7 @@ export function ComposeEditor({ initialDraft, property, buckets, recentDrafts }:
   const [, startTransition] = useTransition();
   const [bucketDetail, setBucketDetail] = useState<Map<string, BucketDetail>>(new Map());
   const [openBucket, setOpenBucket] = useState<string | null>(null);
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [picker, setPicker] = useState<{ filter: string }>({ filter: "" });
   const [sending, setSending] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -257,11 +258,44 @@ export function ComposeEditor({ initialDraft, property, buckets, recentDrafts }:
     }
   }
 
+  function toggleGroup(name: string) {
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
   const filteredBuckets = useMemo(() => {
     const f = picker.filter.toLowerCase().trim();
     if (f.length < 2) return buckets;
-    return buckets.filter((b) => b.name.toLowerCase().includes(f));
+    return buckets.filter(
+      (b) =>
+        b.name.toLowerCase().includes(f) ||
+        b.group.toLowerCase().includes(f),
+    );
   }, [buckets, picker.filter]);
+
+  // Mirror the Items tab grouping: cluster buckets by `group`, sort by total
+  // spend desc. Single-member groups render as one-row buckets (skip the
+  // middle layer).
+  const groupedPickerBuckets = useMemo(() => {
+    const map = new Map<string, { name: string; members: BucketSummary[]; totalSpend: number }>();
+    for (const b of filteredBuckets) {
+      const key = b.group;
+      if (!map.has(key)) map.set(key, { name: key, members: [], totalSpend: 0 });
+      const g = map.get(key)!;
+      g.members.push(b);
+      g.totalSpend += b.totalSpend;
+    }
+    return Array.from(map.values())
+      .map((g) => ({
+        ...g,
+        members: g.members.slice().sort((a, b) => b.totalSpend - a.totalSpend),
+      }))
+      .sort((a, b) => b.totalSpend - a.totalSpend);
+  }, [filteredBuckets]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -313,53 +347,71 @@ export function ComposeEditor({ initialDraft, property, buckets, recentDrafts }:
             className="h-8 rounded border border-input bg-transparent px-2 text-xs outline-none focus-visible:border-ring"
           />
           <ul className="flex flex-col gap-1">
-            {filteredBuckets.map((b) => {
-              const isOpen = openBucket === b.name;
-              const detail = bucketDetail.get(b.name);
+            {groupedPickerBuckets.map((group) => {
+              const isSingle = group.members.length === 1;
+              const singleBucket = isSingle ? group.members[0] : null;
+
+              if (singleBucket) {
+                // Single-member groups render as a one-step expand straight to phrasings.
+                const isOpen = openBucket === singleBucket.name;
+                const detail = bucketDetail.get(singleBucket.name);
+                return (
+                  <PickerBucketRow
+                    key={singleBucket.name}
+                    label={singleBucket.name}
+                    itemCount={singleBucket.itemCount}
+                    isOpen={isOpen}
+                    detail={detail}
+                    indent={false}
+                    onToggle={() => toggleBucket(singleBucket.name)}
+                    onAddPhrasing={(p) =>
+                      handleAddPhrasing(
+                        p.description,
+                        p.medianTotal != null ? Math.round(p.medianTotal * 100) : null,
+                      )
+                    }
+                  />
+                );
+              }
+
+              const groupOpen = openGroups.has(group.name);
               return (
-                <li key={b.name} className="rounded border border-transparent">
+                <li key={group.name} className="rounded border border-transparent">
                   <button
                     type="button"
-                    onClick={() => toggleBucket(b.name)}
-                    className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-xs hover:bg-accent/40"
+                    onClick={() => toggleGroup(group.name)}
+                    className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-xs font-medium hover:bg-accent/40"
                   >
-                    <span>{b.name}</span>
-                    <span className="text-[10px] text-muted-foreground">{b.itemCount}</span>
+                    <span>{group.name}</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {groupOpen ? "▾" : "▸"}{" "}
+                      {group.members.reduce((s, m) => s + m.itemCount, 0)}
+                    </span>
                   </button>
-                  {isOpen && (
-                    <div className="ml-2 mt-1 border-l border-border pl-2">
-                      {detail ? (
-                        <ul className="flex flex-col gap-1">
-                          {detail.phrasings.slice(0, 50).map((p) => (
-                            <li key={p.description} className="flex flex-col gap-0.5">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleAddPhrasing(
-                                    p.description,
-                                    p.medianTotal != null ? Math.round(p.medianTotal * 100) : null,
-                                  )
-                                }
-                                className="text-left text-[11px] leading-snug hover:underline"
-                                title={`+ Add to draft (median ${
-                                  p.medianTotal != null ? `$${Math.round(p.medianTotal)}` : "—"
-                                })`}
-                              >
-                                + {titleCase(p.description)}
-                              </button>
-                              <span className="text-[10px] text-muted-foreground">
-                                n={p.n} · med{" "}
-                                {p.medianTotal != null
-                                  ? `$${Math.round(p.medianTotal).toLocaleString()}`
-                                  : "—"}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="py-1 text-[11px] text-muted-foreground">Loading…</p>
-                      )}
-                    </div>
+                  {groupOpen && (
+                    <ul className="ml-2 mt-1 flex flex-col gap-1 border-l border-border pl-2">
+                      {group.members.map((member) => {
+                        const isOpen = openBucket === member.name;
+                        const detail = bucketDetail.get(member.name);
+                        return (
+                          <PickerBucketRow
+                            key={member.name}
+                            label={member.name}
+                            itemCount={member.itemCount}
+                            isOpen={isOpen}
+                            detail={detail}
+                            indent
+                            onToggle={() => toggleBucket(member.name)}
+                            onAddPhrasing={(p) =>
+                              handleAddPhrasing(
+                                p.description,
+                                p.medianTotal != null ? Math.round(p.medianTotal * 100) : null,
+                              )
+                            }
+                          />
+                        );
+                      })}
+                    </ul>
                   )}
                 </li>
               );
@@ -504,6 +556,67 @@ export function ComposeEditor({ initialDraft, property, buckets, recentDrafts }:
         </section>
       </div>
     </div>
+  );
+}
+
+function PickerBucketRow({
+  label,
+  itemCount,
+  isOpen,
+  detail,
+  indent,
+  onToggle,
+  onAddPhrasing,
+}: {
+  label: string;
+  itemCount: number;
+  isOpen: boolean;
+  detail: BucketDetail | undefined;
+  indent: boolean;
+  onToggle: () => void;
+  onAddPhrasing: (p: BucketDetail["phrasings"][number]) => void;
+}) {
+  return (
+    <li className="rounded border border-transparent">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-xs hover:bg-accent/40"
+      >
+        <span className={indent ? "" : ""}>{label}</span>
+        <span className="text-[10px] text-muted-foreground">{itemCount}</span>
+      </button>
+      {isOpen && (
+        <div className="ml-2 mt-1 border-l border-border pl-2">
+          {detail ? (
+            <ul className="flex flex-col gap-1">
+              {detail.phrasings.slice(0, 50).map((p) => (
+                <li key={p.description} className="flex flex-col gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => onAddPhrasing(p)}
+                    className="text-left text-[11px] leading-snug hover:underline"
+                    title={`+ Add to draft (median ${
+                      p.medianTotal != null ? `$${Math.round(p.medianTotal)}` : "—"
+                    })`}
+                  >
+                    + {titleCase(p.description)}
+                  </button>
+                  <span className="text-[10px] text-muted-foreground">
+                    n={p.n} · med{" "}
+                    {p.medianTotal != null
+                      ? `$${Math.round(p.medianTotal).toLocaleString()}`
+                      : "—"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="py-1 text-[11px] text-muted-foreground">Loading…</p>
+          )}
+        </div>
+      )}
+    </li>
   );
 }
 

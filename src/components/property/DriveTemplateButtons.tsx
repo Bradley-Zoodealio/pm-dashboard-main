@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useState, useTransition } from "react";
 import {
   createCompsAction,
@@ -16,18 +15,15 @@ interface ButtonSpec {
   label: string;
   action: TemplateAction;
   existingUrl: string | null;
-  showInStage?: (stage: string) => boolean;
 }
 
 export function DriveTemplateButtons({
   slug,
-  stage,
   comps_url,
   remodel_bid_url,
   project_tracker_url,
 }: {
   slug: string;
-  stage: string;
   comps_url: string | null;
   remodel_bid_url: string | null;
   project_tracker_url: string | null;
@@ -35,15 +31,8 @@ export function DriveTemplateButtons({
   const buttons: ButtonSpec[] = [
     { label: "Comps Sheet", action: createCompsAction, existingUrl: comps_url },
     { label: "Remodel Bid", action: createRemodelBidAction, existingUrl: remodel_bid_url },
-    {
-      label: "Project Tracker",
-      action: createProjectTrackerAction,
-      existingUrl: project_tracker_url,
-      showInStage: (s) => s === "contract-work",
-    },
+    { label: "Project Tracker", action: createProjectTrackerAction, existingUrl: project_tracker_url },
   ];
-
-  const visible = buttons.filter((b) => !b.showInStage || b.showInStage(stage));
 
   return (
     <section className="rounded-lg border border-border bg-card p-4">
@@ -51,18 +40,12 @@ export function DriveTemplateButtons({
         Drive
       </h2>
       <div className="flex flex-wrap gap-2">
-        {visible.map((b) => (
+        {buttons.map((b) => (
           <TemplateButton key={b.label} slug={slug} spec={b} />
         ))}
       </div>
       {remodel_bid_url && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Link
-            href={`/bids/compose?property=${slug}`}
-            className="rounded-md border border-input bg-card px-3 py-1.5 text-sm font-medium hover:bg-accent"
-          >
-            Compose Bid Draft →
-          </Link>
+        <div className="mt-3">
           <FillBidFromJson slug={slug} remodelBidUrl={remodel_bid_url} />
         </div>
       )}

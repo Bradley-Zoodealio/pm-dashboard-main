@@ -159,6 +159,36 @@ export async function searchBids(query: string, limit = 40): Promise<BidSearchHi
   return Array.from(map.values()).slice(0, limit);
 }
 
+export interface ScrapeRunSummary {
+  finished_at: string | null;
+  files_seen: number;
+  bids_upserted: number;
+  items_upserted: number;
+  has_errors: boolean;
+}
+
+export async function getLastSuccessfulScrape(): Promise<ScrapeRunSummary | null> {
+  const { data, error } = await getSupabase()
+    .from("bid_scrape_runs")
+    .select("finished_at, files_seen, bids_upserted, items_upserted, errors")
+    .not("finished_at", "is", null)
+    .order("finished_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const errs = Array.isArray((data as { errors: unknown }).errors)
+    ? ((data as { errors: unknown[] }).errors)
+    : [];
+  return {
+    finished_at: (data as { finished_at: string | null }).finished_at,
+    files_seen: (data as { files_seen: number }).files_seen,
+    bids_upserted: (data as { bids_upserted: number }).bids_upserted,
+    items_upserted: (data as { items_upserted: number }).items_upserted,
+    has_errors: errs.length > 0,
+  };
+}
+
 export async function listRecentBids(limit = 30): Promise<BidRow[]> {
   const { data, error } = await getSupabase()
     .from("bids")
