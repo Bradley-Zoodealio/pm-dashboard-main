@@ -34,22 +34,8 @@ interface Props {
   buckets: BucketSummary[];
 }
 
-type AreaFilter = "all" | "kitchen" | "bathroom" | "interior" | "mechanical" | "exterior" | "demo" | "misc";
-
-const AREA_CHIPS: Array<{ value: AreaFilter; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "kitchen", label: "Kitchen" },
-  { value: "bathroom", label: "Bathroom" },
-  { value: "interior", label: "Interior" },
-  { value: "mechanical", label: "Mechanical" },
-  { value: "exterior", label: "Exterior" },
-  { value: "demo", label: "Demo" },
-  { value: "misc", label: "Misc" },
-];
-
 export function BucketGrid({ buckets }: Props) {
   const [query, setQuery] = useState("");
-  const [areaFilter, setAreaFilter] = useState<AreaFilter>("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [details, setDetails] = useState<Map<string, BucketDetail>>(new Map());
   const [drawerPhrasing, setDrawerPhrasing] = useState<string | null>(null);
@@ -59,28 +45,16 @@ export function BucketGrid({ buckets }: Props) {
 
   const q = query.trim().toLowerCase();
 
-  // Counts per area for chip badges.
-  const areaCounts = useMemo(() => {
-    const m: Record<string, number> = { all: buckets.length };
-    for (const b of buckets) m[b.area] = (m[b.area] ?? 0) + 1;
-    return m;
-  }, [buckets]);
-
   const filteredBuckets = useMemo(() => {
-    let result = buckets;
-    if (areaFilter !== "all") {
-      result = result.filter((b) => b.area === areaFilter);
-    }
-    if (q.length >= 2) {
-      result = result.filter((b) => {
-        if (b.name.toLowerCase().includes(q)) return true;
-        const detail = details.get(b.name);
-        if (!detail) return false;
-        return detail.phrasings.some((p) => p.description.includes(q));
-      });
-    }
-    return result;
-  }, [buckets, areaFilter, q, details]);
+    if (q.length < 2) return buckets;
+    return buckets.filter((b) => {
+      if (b.name.toLowerCase().includes(q)) return true;
+      if (b.group.toLowerCase().includes(q)) return true;
+      const detail = details.get(b.name);
+      if (!detail) return false;
+      return detail.phrasings.some((p) => p.description.includes(q));
+    });
+  }, [buckets, q, details]);
 
   function toggle(expandKey: string, detailBucketName?: string | null) {
     setExpanded((prev) => {
@@ -206,30 +180,6 @@ export function BucketGrid({ buckets }: Props) {
         placeholder="Search phrasings or category names — e.g. shaker, lvp, recaulk"
         className="h-9 rounded border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
       />
-
-      <div className="flex flex-wrap gap-1">
-        {AREA_CHIPS.map((chip) => {
-          const count = areaCounts[chip.value] ?? 0;
-          if (chip.value !== "all" && count === 0) return null;
-          const active = areaFilter === chip.value;
-          return (
-            <button
-              key={chip.value}
-              type="button"
-              onClick={() => setAreaFilter(chip.value)}
-              className={
-                "rounded-full border px-3 py-1 text-xs font-medium transition-colors " +
-                (active
-                  ? "border-foreground bg-foreground text-background"
-                  : "border-input bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground")
-              }
-            >
-              {chip.label}
-              <span className="ml-1.5 text-[10px] opacity-70">{count}</span>
-            </button>
-          );
-        })}
-      </div>
 
       <div className="flex flex-col gap-2">
         {groupedFilteredBuckets.map((group) => {
