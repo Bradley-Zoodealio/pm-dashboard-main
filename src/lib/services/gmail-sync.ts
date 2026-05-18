@@ -255,7 +255,46 @@ export interface ActivityEvent {
   sender: string;
   subject: string;
   snippet: string;
+  // The author's contribution to the thread, with quoted reply history
+  // ("On ... wrote:" blocks, lines starting with `>`, e-sign footers) stripped
+  // so the expanded view reads as the new content for this message only.
+  body: string;
   eventType: ActivityEventType;
+}
+
+// Cuts a message body at the first quoted-reply boundary so the expanded
+// Activity row shows only this message's contribution, not the entire prior
+// thread copy-pasted by Gmail/Outlook quoting.
+function stripQuotedReply(body: string): string {
+  const lines = body.split("\n");
+  let cutIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Gmail "On <date> ... wrote:" attribution — may wrap onto the previous
+    // 1–3 lines, so when we see "wrote:" we walk back looking for the "On ".
+    if (/wrote:\s*$/.test(line)) {
+      for (let j = i; j >= Math.max(0, i - 3); j--) {
+        if (/^\s*On /.test(lines[j])) {
+          cutIdx = j;
+          break;
+        }
+      }
+      if (cutIdx >= 0) break;
+    }
+    // Outlook-style separator.
+    if (/^\s*-{2,}\s*Original Message\s*-{2,}\s*$/i.test(line)) {
+      cutIdx = i;
+      break;
+    }
+    // Forwarded-message marker.
+    if (/^\s*-{2,}\s*Forwarded message\s*-{2,}\s*$/i.test(line)) {
+      cutIdx = i;
+      break;
+    }
+  }
+  let kept = cutIdx >= 0 ? lines.slice(0, cutIdx) : lines;
+  kept = kept.filter((l) => !/^\s*>/.test(l));
+  return kept.join("\n").trim();
 }
 
 export async function getThreadActivity(
@@ -288,8 +327,9 @@ export async function getThreadActivity(
       eventType = "closing-confirmed";
     }
 
+    const cleanBody = stripQuotedReply(body);
     const firstLine =
-      body.split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith(">")) ?? "";
+      cleanBody.split("\n").map((l) => l.trim()).find((l) => l) ?? "";
     const snippet = firstLine.length > 140 ? firstLine.slice(0, 137) + "…" : firstLine;
 
     events.push({
@@ -298,6 +338,7 @@ export async function getThreadActivity(
       sender: senderName(from),
       subject,
       snippet,
+      body: cleanBody,
       eventType,
     });
   }
