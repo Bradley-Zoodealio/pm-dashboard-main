@@ -141,20 +141,6 @@ function PropertyFields({ property }: { property: PropertyRow }) {
       display: property.assignee ?? "",
       input: property.assignee ?? "",
     },
-    {
-      label: "ARV",
-      field: "arv_cents",
-      display: formatMoney(property.arv_cents),
-      input: moneyInputValue(property.arv_cents),
-      inputMode: "decimal",
-    },
-    {
-      label: "Est. repair",
-      field: "est_repair_cents",
-      display: formatMoney(property.est_repair_cents),
-      input: moneyInputValue(property.est_repair_cents),
-      inputMode: "decimal",
-    },
   ];
 
   return (

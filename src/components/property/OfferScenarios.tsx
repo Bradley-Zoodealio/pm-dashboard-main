@@ -98,11 +98,16 @@ export function OfferScenarios({
           Offer Scenarios
         </h2>
         <p className="text-sm text-muted-foreground">
-          Set the purchase price (and ARV) to compute scenarios.
+          Set the purchase price to compute scenarios.
         </p>
       </section>
     );
   }
+
+  // ARV defaults to Purchase (the seller-agreed price already reflects the
+  // post-repair value when CLR > 0, or the as-is value when CLR = 0). The
+  // Repaired column uses CLR as the renovation budget directly.
+  const effectiveArv = arv || purchase;
 
   return (
     <section className="rounded-lg border border-border bg-card p-4">
@@ -111,7 +116,7 @@ export function OfferScenarios({
           Offer Scenarios
         </h2>
         <div className="text-xs text-muted-foreground">
-          ARV {fmtMoney(arv)} · Reserve{" "}
+          ARV {fmtMoney(effectiveArv)} · Reserve{" "}
           {reservePct != null ? `${reservePct}%` : "—"}
         </div>
       </header>
