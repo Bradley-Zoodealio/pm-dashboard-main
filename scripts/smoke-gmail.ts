@@ -28,9 +28,12 @@ async function main() {
       console.log(`  MOVE      ${item.address}`);
       console.log(`            ${labelFor(item.fromStage)} → ${labelFor(item.toStage)}`);
       console.log(`            note: ${item.note}`);
-    } else {
+    } else if (item.type === "copy-cma") {
       console.log(`  COPY-CMA  ${item.address}`);
       console.log(`            source: ${item.sourceUrl}`);
+    } else {
+      console.log(`  FIX-URL   ${item.address}`);
+      console.log(`            ${item.oldUrl ?? "(unset)"} → ${item.newUrl}`);
     }
     console.log(`        thread: https://mail.google.com/mail/u/0/#all/${item.threadId}\n`);
   }

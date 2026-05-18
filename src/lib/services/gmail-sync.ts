@@ -14,6 +14,7 @@ import {
   insertProperty,
   listProperties,
   moveStage,
+  updatePropertyField,
   type PropertyInsert,
   type PropertyRow,
 } from "@/lib/db/properties";
@@ -110,6 +111,15 @@ function redfinUrl(address: string): string {
 
 function questionnaireUrl(threadId: string): string {
   return `https://mail.google.com/mail/u/0/#all/${threadId}`;
+}
+
+// Extracts a Gmail thread id from a mail.google.com URL. Mirrors the regex
+// used by PropertyActivity so backfilled URLs stay in sync with what the
+// Activity component can resolve.
+function extractThreadIdFromUrl(url: string | null): string | null {
+  if (!url) return null;
+  const m = url.match(/#all\/([A-Za-z0-9]+)/);
+  return m ? m[1] : null;
 }
 
 // ── Detection functions ──────────────────────────────────────────────────────
@@ -324,7 +334,24 @@ export interface PlanItemCopyCma {
   sourceUrl: string;
 }
 
-export type PlanItem = PlanItemAdd | PlanItemMove | PlanItemCopyCma;
+// Backfills questionnaire_url with the contracts@ thread id when the existing
+// value is missing or refers to a thread id from a different mailbox (e.g.
+// pasted from a personal account). Without this, Activity would 404 because
+// Gmail thread ids are per-mailbox.
+export interface PlanItemSetThreadId {
+  type: "set-thread-id";
+  threadId: string;
+  slug: string;
+  address: string;
+  oldUrl: string | null;
+  newUrl: string;
+}
+
+export type PlanItem =
+  | PlanItemAdd
+  | PlanItemMove
+  | PlanItemCopyCma
+  | PlanItemSetThreadId;
 
 function bidNote(b: RemodelBidSignal): string {
   return (
@@ -396,6 +423,10 @@ export async function scanForPipelineChanges(
   ]);
 
   const plan: PlanItem[] = [];
+  // Track slugs we've already proposed a thread-id fix for so re-inspections
+  // (multiple inspection threads, same property) only emit one FIX URL row.
+  // listThreads returns newest-first, so the first thread we see is preferred.
+  const setThreadIdSlugs = new Set<string>();
   for (const t of threads) {
     const parsed = await parseInspectionThread(t.threadId, mailbox);
     if (!parsed) continue;
@@ -418,6 +449,22 @@ export async function scanForPipelineChanges(
         copyCma,
       });
       continue;
+    }
+
+    const existingThreadId = extractThreadIdFromUrl(existingProp.questionnaire_url);
+    if (
+      existingThreadId !== parsed.threadId &&
+      !setThreadIdSlugs.has(existingProp.slug)
+    ) {
+      plan.push({
+        type: "set-thread-id",
+        threadId: parsed.threadId,
+        slug: existingProp.slug,
+        address: existingProp.address,
+        oldUrl: existingProp.questionnaire_url,
+        newUrl: questionnaireUrl(parsed.threadId),
+      });
+      setThreadIdSlugs.add(existingProp.slug);
     }
 
     if (existingProp.stage === "inspection-received") {
@@ -574,6 +621,9 @@ export async function applyPlan(plan: PlanItem[]): Promise<ApplyResult> {
           slug: item.slug,
           sourceUrl: item.sourceUrl,
         });
+        details.push({ ok: true, item });
+      } else if (item.type === "set-thread-id") {
+        await updatePropertyField(item.slug, "questionnaire_url", item.newUrl);
         details.push({ ok: true, item });
       }
     } catch (err) {
