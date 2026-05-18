@@ -71,19 +71,36 @@ export async function PropertyActivity({
                 <span>{new Date(e.iso).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
                 <span>{e.sender}</span>
               </div>
-              <div className="flex flex-1 flex-col gap-0.5">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${EVENT_BADGE_COLOR[e.eventType]}`}
-                  >
-                    {EVENT_LABELS[e.eventType]}
-                  </span>
-                  <span className="text-xs text-muted-foreground">{e.subject}</span>
-                </div>
-                {e.snippet && (
-                  <p className="text-sm text-foreground/80">{e.snippet}</p>
+              <details className="group flex-1 rounded border border-transparent open:border-border open:bg-muted/40 open:p-2">
+                <summary className="flex cursor-pointer list-none flex-col gap-0.5 marker:hidden [&::-webkit-details-marker]:hidden">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${EVENT_BADGE_COLOR[e.eventType]}`}
+                    >
+                      {EVENT_LABELS[e.eventType]}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{e.subject}</span>
+                    <span className="ml-auto text-[10px] text-muted-foreground/70 group-open:hidden">
+                      ▸ expand
+                    </span>
+                    <span className="ml-auto hidden text-[10px] text-muted-foreground/70 group-open:inline">
+                      ▾ collapse
+                    </span>
+                  </div>
+                  {e.snippet && (
+                    <p className="text-sm text-foreground/80 group-open:hidden">{e.snippet}</p>
+                  )}
+                </summary>
+                {e.body ? (
+                  <pre className="mt-2 whitespace-pre-wrap break-words font-sans text-sm text-foreground/90">
+                    {e.body}
+                  </pre>
+                ) : (
+                  <p className="mt-2 text-xs italic text-muted-foreground">
+                    (no plaintext body — message may be HTML-only)
+                  </p>
                 )}
-              </div>
+              </details>
             </li>
           ))}
         </ol>
