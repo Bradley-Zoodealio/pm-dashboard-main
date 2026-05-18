@@ -4,6 +4,70 @@ import {
   type ActivityEventType,
 } from "@/lib/services/gmail-sync";
 
+// Plaintext from Gmail contains full URLs that are often hundreds of
+// characters (Inspectify tracking links, Drive sheet ids, etc.). Render them
+// as clickable anchors with a compact host+path display so the timeline reads
+// naturally without dominating the page.
+function compactLinkText(url: string): string {
+  const maxLen = 60;
+  try {
+    const u = new URL(url);
+    const host = u.host.replace(/^www\./, "");
+    const path = u.pathname === "/" ? "" : u.pathname;
+    const queryHint = u.search ? "?…" : "";
+    const full = `${host}${path}${queryHint}`;
+    if (full.length <= maxLen) return full;
+    // Doesn't fit — keep host + as many whole path segments as fit, then "…".
+    // This keeps URLs like Redfin comps (host + state + city + street) visibly
+    // distinct from one another instead of collapsing to bare "redfin.com/AZ…".
+    const segs = path.split("/").filter(Boolean);
+    let acc = host;
+    for (const seg of segs) {
+      const next = `${acc}/${seg}`;
+      if (next.length + 1 > maxLen) break;
+      acc = next;
+    }
+    return `${acc}/…`;
+  } catch {
+    return url.length > maxLen ? url.slice(0, maxLen - 1) + "…" : url;
+  }
+}
+
+function LinkifiedBody({ text }: { text: string }) {
+  // Match either <https://...> (Gmail plaintext wraps anchor URLs in angles)
+  // or a bare https://... URL. Bracketed form captures group 1; bare URL is
+  // group 2. The brackets are dropped from the output either way.
+  const re = /<(https?:\/\/[^\s<>]+)>|(https?:\/\/[^\s<>]+)/g;
+  const out: React.ReactNode[] = [];
+  let lastIdx = 0;
+  let i = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > lastIdx) {
+      out.push(<span key={`t-${i}`}>{text.slice(lastIdx, match.index)}</span>);
+    }
+    const url = match[1] ?? match[2];
+    out.push(
+      <a
+        key={`l-${i}`}
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={url}
+        className="break-all text-primary underline decoration-dotted underline-offset-2 hover:decoration-solid"
+      >
+        {compactLinkText(url)}
+      </a>,
+    );
+    lastIdx = match.index + match[0].length;
+    i++;
+  }
+  if (lastIdx < text.length) {
+    out.push(<span key={`t-${i}`}>{text.slice(lastIdx)}</span>);
+  }
+  return <>{out}</>;
+}
+
 function extractThreadId(questionnaireUrl: string | null): string | null {
   if (!questionnaireUrl) return null;
   const m = questionnaireUrl.match(/#all\/([A-Za-z0-9]+)/);
@@ -92,9 +156,9 @@ export async function PropertyActivity({
                   )}
                 </summary>
                 {e.body ? (
-                  <pre className="mt-2 whitespace-pre-wrap break-words font-sans text-sm text-foreground/90">
-                    {e.body}
-                  </pre>
+                  <div className="mt-2 whitespace-pre-wrap break-words text-sm text-foreground/90">
+                    <LinkifiedBody text={e.body} />
+                  </div>
                 ) : (
                   <p className="mt-2 text-xs italic text-muted-foreground">
                     (no plaintext body — message may be HTML-only)
