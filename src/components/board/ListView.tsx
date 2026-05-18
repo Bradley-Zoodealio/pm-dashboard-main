@@ -1,5 +1,11 @@
 import Link from "next/link";
-import { STAGES, showCountdown } from "@/lib/services/stages";
+import {
+  ASSIGNEE_OPTIONS,
+  EXEC_OPTIONS,
+  STAGES,
+  isExecReviewStage,
+  showCountdown,
+} from "@/lib/services/stages";
 import {
   TINT_STYLES,
   daysUntil,
@@ -7,6 +13,7 @@ import {
   tintForProperty,
 } from "@/lib/services/property-tint";
 import type { PropertyRow } from "@/lib/db/properties";
+import { PersonPicker } from "./PersonPicker";
 
 function formatMoney(cents: number | null): string {
   if (cents == null) return "—";
@@ -27,6 +34,7 @@ export function ListView({ properties }: { properties: PropertyRow[] }) {
       {STAGES.map((stage) => {
         const items = byStage.get(stage.id) ?? [];
         if (items.length === 0) return null;
+        const showExec = isExecReviewStage(stage.id);
         return (
           <section key={stage.id} className="flex flex-col gap-2">
             <header className="flex items-baseline justify-between px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -45,6 +53,7 @@ export function ListView({ properties }: { properties: PropertyRow[] }) {
                     <th className="px-3 py-2 text-right">Reserve</th>
                     <th className="px-3 py-2 text-left">Inspect</th>
                     <th className="px-3 py-2 text-left">Assignee</th>
+                    {showExec && <th className="px-3 py-2 text-left">Exec</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -82,7 +91,26 @@ export function ListView({ properties }: { properties: PropertyRow[] }) {
                             </span>
                           )}
                         </td>
-                        <td className="px-3 py-2">{p.assignee ?? "—"}</td>
+                        <td className="px-3 py-2">
+                          <PersonPicker
+                            slug={p.slug}
+                            field="assignee"
+                            value={p.assignee}
+                            options={ASSIGNEE_OPTIONS}
+                            ariaLabel="Assignee"
+                          />
+                        </td>
+                        {showExec && (
+                          <td className="px-3 py-2">
+                            <PersonPicker
+                              slug={p.slug}
+                              field="exec_reviewer"
+                              value={p.exec_reviewer}
+                              options={EXEC_OPTIONS}
+                              ariaLabel="Exec reviewer"
+                            />
+                          </td>
+                        )}
                       </tr>
                     );
                   })}

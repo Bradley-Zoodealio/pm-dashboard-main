@@ -23,6 +23,7 @@ const EDITABLE_FIELDS = [
   "resale_fee_pct",
   "inspect_date",
   "assignee",
+  "exec_reviewer",
   "inspect_url",
   "redfin_url",
   "cma_url",
@@ -39,6 +40,7 @@ type EditableField = (typeof EDITABLE_FIELDS)[number];
 const TEXT_FIELDS = new Set<EditableField>([
   "address",
   "assignee",
+  "exec_reviewer",
   "inspect_url",
   "redfin_url",
   "cma_url",
