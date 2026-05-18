@@ -9,9 +9,9 @@ export const dynamic = "force-dynamic";
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ assignee?: string }>;
+  searchParams: Promise<{ assignee?: string; exec?: string }>;
 }) {
-  const { assignee } = await searchParams;
+  const { assignee, exec } = await searchParams;
   let properties: PropertyRow[] = [];
   let error: string | null = null;
   try {
@@ -20,9 +20,13 @@ export default async function Page({
     error = (err as Error).message;
   }
 
-  const filtered = assignee
-    ? properties.filter((p) => (p.assignee ?? "Unassigned") === assignee)
-    : properties;
+  let filtered = properties;
+  if (assignee) {
+    filtered = filtered.filter((p) => (p.assignee ?? "Unassigned") === assignee);
+  }
+  if (exec) {
+    filtered = filtered.filter((p) => (p.exec_reviewer ?? "Unassigned") === exec);
+  }
 
   if (error) {
     return (
@@ -60,6 +64,11 @@ export default async function Page({
           {assignee && (
             <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary">
               {assignee}
+            </span>
+          )}
+          {exec && (
+            <span className="ml-2 rounded-full bg-amber-500/15 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300">
+              Exec: {exec}
             </span>
           )}
         </span>

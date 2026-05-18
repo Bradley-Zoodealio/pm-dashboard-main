@@ -13,6 +13,7 @@ export interface PropertyRow {
   reserve_pct: number | null;
   inspect_date: string | null;
   assignee: string | null;
+  exec_reviewer: string | null;
   inspect_url: string | null;
   redfin_url: string | null;
   cma_url: string | null;
@@ -116,6 +117,7 @@ export interface PropertyInsert {
   reserve_pct?: number | null;
   inspect_date?: string | null;
   assignee?: string | null;
+  exec_reviewer?: string | null;
   inspect_url?: string | null;
   redfin_url?: string | null;
   cma_url?: string | null;

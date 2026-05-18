@@ -64,3 +64,13 @@ export function showCountdown(stageId: string): boolean {
 export const PM_TEAM = ["Bradley", "Ethan", "Colton"] as const;
 export type PmName = (typeof PM_TEAM)[number];
 export const ASSIGNEE_OPTIONS = ["Unassigned", ...PM_TEAM] as const;
+
+// Exec team that reviews the Remodel Bid email we send out. The
+// exec_reviewer field is meaningful once a property enters Exec Final Review.
+export const EXEC_TEAM = ["Kala", "Jason", "Eliot"] as const;
+export type ExecName = (typeof EXEC_TEAM)[number];
+export const EXEC_OPTIONS = ["Unassigned", ...EXEC_TEAM] as const;
+
+export function isExecReviewStage(stageId: string): boolean {
+  return stageId === "exec-final-review";
+}
