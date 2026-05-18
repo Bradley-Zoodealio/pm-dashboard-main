@@ -25,6 +25,12 @@ export interface PropertyRow {
   est_repair_cents: number | null;
   program_fee_pct: number | null;
   resale_fee_pct: number | null;
+  revised_as_is_purchase_cents: number | null;
+  revised_as_is_clr_cents: number | null;
+  revised_as_is_reserve_pct: number | null;
+  revised_repaired_purchase_cents: number | null;
+  revised_repaired_clr_cents: number | null;
+  revised_repaired_reserve_pct: number | null;
   drive_folder_id: string | null;
   stage_changed_at: string;
   cancelled_at: string | null;
