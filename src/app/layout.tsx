@@ -36,7 +36,7 @@ export default function RootLayout({
           <BrandMark />
           <TopNav />
         </header>
-        <div className="flex flex-1 flex-col overflow-hidden">{children}</div>
+        <div className="flex flex-1 flex-col">{children}</div>
       </body>
     </html>
   );

@@ -21,6 +21,12 @@ const EDITABLE_FIELDS = [
   "reserve_pct",
   "program_fee_pct",
   "resale_fee_pct",
+  "revised_as_is_purchase_cents",
+  "revised_as_is_clr_cents",
+  "revised_as_is_reserve_pct",
+  "revised_repaired_purchase_cents",
+  "revised_repaired_clr_cents",
+  "revised_repaired_reserve_pct",
   "inspect_date",
   "assignee",
   "exec_reviewer",
@@ -55,6 +61,10 @@ const MONEY_FIELDS = new Set<EditableField>([
   "clr_cents",
   "arv_cents",
   "est_repair_cents",
+  "revised_as_is_purchase_cents",
+  "revised_as_is_clr_cents",
+  "revised_repaired_purchase_cents",
+  "revised_repaired_clr_cents",
 ]);
 
 const fieldSchema = z.enum(EDITABLE_FIELDS);
@@ -72,7 +82,9 @@ function parseValueFor(field: EditableField, raw: string): unknown {
   if (
     field === "reserve_pct" ||
     field === "program_fee_pct" ||
-    field === "resale_fee_pct"
+    field === "resale_fee_pct" ||
+    field === "revised_as_is_reserve_pct" ||
+    field === "revised_repaired_reserve_pct"
   ) {
     if (trimmed === "") return null;
     const n = parseFloat(trimmed.replace(/[^0-9.-]/g, ""));
@@ -98,6 +110,37 @@ export async function updateFieldAction(
   await updatePropertyField(checkedSlug, checkedField, value as never);
   revalidatePath(`/properties/${checkedSlug}`);
   revalidatePath("/");
+}
+
+const scenarioKindSchema = z.enum(["as-is", "repaired"]);
+
+// Atomic save of the three editable fields in an Offer Scenarios column.
+// Either kind writes to a different set of columns; null clears the revision
+// (falls back to the original offer in display).
+export async function saveRevisedScenarioAction(
+  slug: string,
+  kind: "as-is" | "repaired",
+  values: {
+    purchaseCents: number | null;
+    clrCents: number | null;
+    reservePct: number | null;
+  },
+): Promise<void> {
+  const checkedSlug = slugSchema.parse(slug);
+  const checkedKind = scenarioKindSchema.parse(kind);
+  const prefix = checkedKind === "as-is" ? "revised_as_is" : "revised_repaired";
+
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("properties")
+    .update({
+      [`${prefix}_purchase_cents`]: values.purchaseCents,
+      [`${prefix}_clr_cents`]: values.clrCents,
+      [`${prefix}_reserve_pct`]: values.reservePct,
+    })
+    .eq("slug", checkedSlug);
+  if (error) throw error;
+  revalidatePath(`/properties/${checkedSlug}`);
 }
 
 export async function moveStageAction(slug: string, stage: string): Promise<void> {

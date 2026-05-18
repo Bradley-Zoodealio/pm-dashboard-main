@@ -46,7 +46,7 @@ export default async function PropertyPage({
         </Link>
       </nav>
 
-      <header className="flex flex-col gap-1">
+      <header className="sticky top-0 z-30 -mx-6 flex flex-col gap-1 border-b border-border bg-background/95 px-6 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div className="text-xs uppercase tracking-wide text-muted-foreground">
           {labelFor(property.stage)}
         </div>
@@ -62,11 +62,22 @@ export default async function PropertyPage({
 
       <PropertyFields property={property} />
       <OfferScenarios
+        slug={property.slug}
         purchaseCents={property.purchase_cents}
         clrCents={property.clr_cents}
         reservePct={property.reserve_pct}
         arvCents={property.arv_cents}
         estRepairCents={property.est_repair_cents}
+        revisedAsIs={{
+          purchaseCents: property.revised_as_is_purchase_cents,
+          clrCents: property.revised_as_is_clr_cents,
+          reservePct: property.revised_as_is_reserve_pct,
+        }}
+        revisedRepaired={{
+          purchaseCents: property.revised_repaired_purchase_cents,
+          clrCents: property.revised_repaired_clr_cents,
+          reservePct: property.revised_repaired_reserve_pct,
+        }}
       />
       <DriveTemplateButtons
         slug={property.slug}
@@ -146,7 +157,7 @@ function PropertyFields({ property }: { property: PropertyRow }) {
   return (
     <section className="rounded-lg border border-border bg-card p-4">
       <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">
-        Fields
+        Original Offer
       </h2>
       <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
         {fields.map((f) => (
