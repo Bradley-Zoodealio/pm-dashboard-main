@@ -19,13 +19,18 @@ async function main() {
 
   for (const item of result.plan) {
     if (item.type === "add") {
-      console.log(`  ADD   ${item.address}`);
-      console.log(`        → ${labelFor(item.toStage)}`);
-      if (item.note) console.log(`        note: ${item.note}`);
+      console.log(`  ADD       ${item.address}`);
+      console.log(`            → ${labelFor(item.toStage)}`);
+      if (item.note) console.log(`            note: ${item.note}`);
+      if (item.copyCma)
+        console.log(`            will copy CMA: ${item.copyCma.sourceUrl}`);
+    } else if (item.type === "move") {
+      console.log(`  MOVE      ${item.address}`);
+      console.log(`            ${labelFor(item.fromStage)} → ${labelFor(item.toStage)}`);
+      console.log(`            note: ${item.note}`);
     } else {
-      console.log(`  MOVE  ${item.address}`);
-      console.log(`        ${labelFor(item.fromStage)} → ${labelFor(item.toStage)}`);
-      console.log(`        note: ${item.note}`);
+      console.log(`  COPY-CMA  ${item.address}`);
+      console.log(`            source: ${item.sourceUrl}`);
     }
     console.log(`        thread: https://mail.google.com/mail/u/0/#all/${item.threadId}\n`);
   }

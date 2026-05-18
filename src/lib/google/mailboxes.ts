@@ -4,35 +4,42 @@ export type MailboxPurpose =
   | "inspection-reports"
   | "status-updates"
   | "personal-thread"
-  | "bid-attachments";
-
-export type MailboxDomain = "zoodealio.com" | "tradeinholdings.com";
+  | "bid-attachments"
+  | "drive-operations";
 
 export interface Mailbox {
   email: string;
   label: string;
-  domain: MailboxDomain;
   purposes: ReadonlyArray<MailboxPurpose>;
+  scopes: ReadonlyArray<string>;
 }
 
+const GMAIL_READONLY = "https://www.googleapis.com/auth/gmail.readonly";
+const DRIVE = "https://www.googleapis.com/auth/drive";
+const SHEETS = "https://www.googleapis.com/auth/spreadsheets";
+
+// OAuth pivot: scopes are authorized at consent-screen time, per account, and
+// recorded in oauth_accounts.scopes. No more Workspace Admin DWD step.
+// `bradley` is a placeholder for the future personal-email login + Gmail write
+// use case — left in the catalog but with empty scopes (not bootstrapped in v1).
 export const MAILBOXES: Record<MailboxKey, Mailbox> = {
   bradley: {
     email: "bradley@zoodealio.com",
     label: "Bradley",
-    domain: "zoodealio.com",
     purposes: ["personal-thread"],
+    scopes: [],
   },
   "tih-contracts": {
     email: "contracts@tradeinholdings.com",
     label: "TIH Contracts",
-    domain: "tradeinholdings.com",
     purposes: ["inspection-reports", "status-updates", "bid-attachments"],
+    scopes: [GMAIL_READONLY],
   },
   "tih-pm": {
     email: "pm@tradeinholdings.com",
     label: "TIH PM",
-    domain: "tradeinholdings.com",
-    purposes: ["status-updates"],
+    purposes: ["drive-operations"],
+    scopes: [DRIVE, SHEETS],
   },
 };
 

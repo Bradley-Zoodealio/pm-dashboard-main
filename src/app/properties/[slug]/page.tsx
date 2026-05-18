@@ -13,6 +13,7 @@ import { PropertyActivity } from "@/components/property/PropertyActivity";
 import { PropertyDocuments } from "@/components/property/PropertyDocuments";
 import { OfferScenarios } from "@/components/property/OfferScenarios";
 import { PropertyDrafts } from "@/components/property/PropertyDrafts";
+import { PropertyLifecycle } from "@/components/property/PropertyLifecycle";
 
 export const dynamic = "force-dynamic";
 
@@ -78,6 +79,7 @@ export default async function PropertyPage({
       <PropertyDocuments property={property} />
       <PropertyActivity questionnaireUrl={property.questionnaire_url} />
       <PropertyNotes slug={property.slug} notes={notes} />
+      <PropertyLifecycle property={property} />
     </main>
   );
 }
@@ -110,6 +112,20 @@ function PropertyFields({ property }: { property: PropertyRow }) {
       field: "reserve_pct",
       display: property.reserve_pct != null ? `${property.reserve_pct}%` : "",
       input: property.reserve_pct != null ? String(property.reserve_pct) : "",
+      inputMode: "decimal",
+    },
+    {
+      label: "Program fee",
+      field: "program_fee_pct",
+      display: property.program_fee_pct != null ? `${property.program_fee_pct}%` : "",
+      input: property.program_fee_pct != null ? String(property.program_fee_pct) : "",
+      inputMode: "decimal",
+    },
+    {
+      label: "Resale fee",
+      field: "resale_fee_pct",
+      display: property.resale_fee_pct != null ? `${property.resale_fee_pct}%` : "",
+      input: property.resale_fee_pct != null ? String(property.resale_fee_pct) : "",
       inputMode: "decimal",
     },
     {

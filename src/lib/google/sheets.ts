@@ -48,7 +48,7 @@ export async function listSheetTabs(
   spreadsheetId: string,
   mailbox: MailboxKey = "bradley",
 ): Promise<SheetTab[]> {
-  const sheets = getSheetsClient(mailbox);
+  const sheets = await getSheetsClient(mailbox);
   const { data } = await sheets.spreadsheets.get({
     spreadsheetId,
     fields: "sheets.properties(sheetId,title,index)",
@@ -66,7 +66,7 @@ export async function writeLineItemsToSheet(
   tabName?: string,
   mailbox: MailboxKey = "bradley",
 ): Promise<number> {
-  const sheets = getSheetsClient(mailbox);
+  const sheets = await getSheetsClient(mailbox);
   const pfx = rangePrefix(tabName);
 
   await sheets.spreadsheets.values.clear({
@@ -109,7 +109,7 @@ export async function readLineItemsFromSheet(
   tabName?: string,
   mailbox: MailboxKey = "bradley",
 ): Promise<ScrapedLineItem[]> {
-  const sheets = getSheetsClient(mailbox);
+  const sheets = await getSheetsClient(mailbox);
   const pfx = rangePrefix(tabName);
   const { data } = await sheets.spreadsheets.values.batchGet({
     spreadsheetId,
@@ -140,7 +140,7 @@ export async function ensureOptionsTabs(
   spreadsheetId: string,
   mailbox: MailboxKey = "bradley",
 ): Promise<void> {
-  const sheets = getSheetsClient(mailbox);
+  const sheets = await getSheetsClient(mailbox);
   const tabs = await listSheetTabs(spreadsheetId, mailbox);
   const hasOption1 = tabs.some((t) => t.title === "Option 1");
   const hasOption2 = tabs.some((t) => t.title === "Option 2");

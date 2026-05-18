@@ -1,82 +1,74 @@
 import "server-only";
 
 import { google, type gmail_v1, type drive_v3, type sheets_v4 } from "googleapis";
+import { decrypt } from "@/lib/crypto/envelope";
+import { getOAuthAccountByKey } from "@/lib/db/oauth-accounts";
 import { MAILBOXES, type MailboxKey } from "./mailboxes";
 
-// These must match the scopes authorized in Workspace Admin → Domain-Wide
-// Delegation. Adding a scope here without also adding it in admin.google.com
-// will break ALL google calls with `unauthorized_client`.
-// Currently authorized for the zoodealio.com workspace:
-//   drive, spreadsheets, gmail.readonly
-// Future scopes (e.g. gmail.send) require a DWD update first.
-const SCOPES = [
-  "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/drive",
-  "https://www.googleapis.com/auth/spreadsheets",
-];
-
-interface ServiceAccountKey {
-  client_email: string;
-  private_key: string;
+interface ClientCreds {
+  id: string;
+  secret: string;
+  redirect: string;
 }
 
-function loadServiceAccountKey(): ServiceAccountKey {
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (!raw) {
+function loadClientCreds(): ClientCreds {
+  const id = process.env.GOOGLE_CLIENT_ID;
+  const secret = process.env.GOOGLE_CLIENT_SECRET;
+  const redirect = process.env.GOOGLE_REDIRECT_URI;
+  if (!id || !secret || !redirect) {
     throw new Error(
-      "GOOGLE_SERVICE_ACCOUNT_JSON is not set. Paste the service account JSON (raw or base64) into .env.local.",
+      "GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REDIRECT_URI must all be set in .env.local for the OAuth flow.",
     );
   }
+  return { id, secret, redirect };
+}
 
-  const trimmed = raw.trim();
-  const decoded = trimmed.startsWith("{")
-    ? trimmed
-    : Buffer.from(trimmed, "base64").toString("utf-8");
+// Construct a bare OAuth2 client — used both by the bootstrap flow (where
+// no refresh token exists yet) and by the per-mailbox factories below.
+export function makeOAuth2Client(opts?: { refreshToken?: string }) {
+  const { id, secret, redirect } = loadClientCreds();
+  const client = new google.auth.OAuth2(id, secret, redirect);
+  if (opts?.refreshToken) {
+    client.setCredentials({ refresh_token: opts.refreshToken });
+  }
+  return client;
+}
 
-  let parsed: ServiceAccountKey;
-  try {
-    parsed = JSON.parse(decoded) as ServiceAccountKey;
-  } catch (err) {
+async function authForMailbox(mailbox: MailboxKey) {
+  const row = await getOAuthAccountByKey(mailbox);
+  if (!row) {
     throw new Error(
-      `GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON: ${(err as Error).message}`,
+      `Mailbox '${mailbox}' is not bootstrapped. Connect it at /admin/oauth.`,
     );
   }
-
-  if (!parsed.client_email || !parsed.private_key) {
+  if (row.revoked_at) {
     throw new Error(
-      "GOOGLE_SERVICE_ACCOUNT_JSON is missing required fields (client_email, private_key).",
+      `Mailbox '${mailbox}' was revoked (${row.revoked_at}). Reconnect at /admin/oauth.`,
     );
   }
-
-  parsed.private_key = parsed.private_key.replace(/\\n/g, "\n");
-  return parsed;
+  const expected = MAILBOXES[mailbox].email;
+  if (row.email.toLowerCase() !== expected.toLowerCase()) {
+    throw new Error(
+      `Mailbox '${mailbox}' is bootstrapped with '${row.email}', expected '${expected}'. Reconnect at /admin/oauth.`,
+    );
+  }
+  return makeOAuth2Client({ refreshToken: decrypt(row.refresh_token_encrypted) });
 }
 
-let cachedKey: ServiceAccountKey | null = null;
-function getServiceAccountKey(): ServiceAccountKey {
-  cachedKey ??= loadServiceAccountKey();
-  return cachedKey;
+export async function getGmailClient(
+  mailbox: MailboxKey,
+): Promise<gmail_v1.Gmail> {
+  return google.gmail({ version: "v1", auth: await authForMailbox(mailbox) });
 }
 
-function makeAuth(mailbox: MailboxKey) {
-  const key = getServiceAccountKey();
-  const mb = MAILBOXES[mailbox];
-  return new google.auth.JWT({
-    email: key.client_email,
-    key: key.private_key,
-    scopes: SCOPES,
-    subject: mb.email,
-  });
+export async function getDriveClient(
+  mailbox: MailboxKey,
+): Promise<drive_v3.Drive> {
+  return google.drive({ version: "v3", auth: await authForMailbox(mailbox) });
 }
 
-export function getGmailClient(mailbox: MailboxKey): gmail_v1.Gmail {
-  return google.gmail({ version: "v1", auth: makeAuth(mailbox) });
-}
-
-export function getDriveClient(mailbox: MailboxKey): drive_v3.Drive {
-  return google.drive({ version: "v3", auth: makeAuth(mailbox) });
-}
-
-export function getSheetsClient(mailbox: MailboxKey): sheets_v4.Sheets {
-  return google.sheets({ version: "v4", auth: makeAuth(mailbox) });
+export async function getSheetsClient(
+  mailbox: MailboxKey,
+): Promise<sheets_v4.Sheets> {
+  return google.sheets({ version: "v4", auth: await authForMailbox(mailbox) });
 }

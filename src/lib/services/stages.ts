@@ -1,3 +1,4 @@
+// Pipeline stages drive the Kanban board columns and stage progression.
 export const STAGES = [
   { id: "inspection-received", label: "Inspection Received" },
   { id: "inspection-under-review", label: "Inspection Under Review" },
@@ -8,14 +9,38 @@ export const STAGES = [
   { id: "ready-for-listing", label: "Ready for Listing" },
 ] as const;
 
-export type StageId = (typeof STAGES)[number]["id"];
+// Terminal stages are valid stage values but never render as board columns.
+// Properties land here via the Cancel/Close server actions in
+// [@/lib/actions/property-lifecycle].
+export const TERMINAL_STAGES = [
+  { id: "cancelled", label: "Cancelled" },
+  { id: "closed", label: "Closed" },
+] as const;
 
-const STAGE_IDS = new Set<string>(STAGES.map((s) => s.id));
-const LABEL_BY_ID = new Map<string, string>(STAGES.map((s) => [s.id, s.label]));
-const ID_BY_LABEL = new Map<string, StageId>(STAGES.map((s) => [s.label.toLowerCase(), s.id]));
+export type PipelineStageId = (typeof STAGES)[number]["id"];
+export type TerminalStageId = (typeof TERMINAL_STAGES)[number]["id"];
+export type StageId = PipelineStageId | TerminalStageId;
+
+const ALL_STAGE_IDS = new Set<string>([
+  ...STAGES.map((s) => s.id),
+  ...TERMINAL_STAGES.map((s) => s.id),
+]);
+const TERMINAL_IDS = new Set<string>(TERMINAL_STAGES.map((s) => s.id));
+const LABEL_BY_ID = new Map<string, string>([
+  ...STAGES.map((s) => [s.id, s.label] as const),
+  ...TERMINAL_STAGES.map((s) => [s.id, s.label] as const),
+]);
+const ID_BY_LABEL = new Map<string, StageId>([
+  ...STAGES.map((s) => [s.label.toLowerCase(), s.id] as const),
+  ...TERMINAL_STAGES.map((s) => [s.label.toLowerCase(), s.id] as const),
+]);
 
 export function isStageId(value: string): value is StageId {
-  return STAGE_IDS.has(value);
+  return ALL_STAGE_IDS.has(value);
+}
+
+export function isTerminalStage(value: string): value is TerminalStageId {
+  return TERMINAL_IDS.has(value);
 }
 
 export function labelFor(id: string): string {
@@ -36,6 +61,6 @@ export function showCountdown(stageId: string): boolean {
   return isStageId(stageId) && COUNTDOWN_STAGES.has(stageId);
 }
 
-export const PM_TEAM = ["Bradley", "Ethan", "Colton", "Chris", "Christina"] as const;
+export const PM_TEAM = ["Bradley", "Ethan", "Colton"] as const;
 export type PmName = (typeof PM_TEAM)[number];
 export const ASSIGNEE_OPTIONS = ["Unassigned", ...PM_TEAM] as const;

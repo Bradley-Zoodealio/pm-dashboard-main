@@ -2,7 +2,7 @@
 
 Clean rewrite of `../../cowork/PPMDashboard` into this Next.js 16 project. Source decisions captured during the 2026-05-14 grilling session.
 
-> **Status:** approved scope, not yet implemented. The old `PPMDashboard` is still the daily driver. Hard cutover happens after this app reaches parity.
+> **Status (2026-05-18):** post-OAuth pivot. Tasks #1–#7 from [`OAUTH_PIVOT_PLAN.md`](./OAUTH_PIVOT_PLAN.md) are complete. The pivot reversed locked decisions 3, 4, and 5 in §2 below — those rows are annotated. New sections **§13–§16** describe the OAuth bootstrap, Drive folder structure, terminal pipeline states, and Gmail-PDF bid backfill that the pivot added. See [`oauth-revocation.md`](./oauth-revocation.md) for the token revocation playbook.
 
 ---
 
@@ -12,7 +12,7 @@ Replace the accreted (HTML → JS → Supabase → Google Cloud → Next.js) old
 
 - **All TypeScript**, all inside one Next.js app. No standalone JS/HTML/Python.
 - **Postgres (Supabase) is the source of truth** for both property pipeline state and the bid library. `TASKS.md` is no longer a served data source.
-- **Service Account + Workspace Domain-Wide Delegation** is the only backend auth. Multi-mailbox impersonation across `@zoodealio.com` and `@tradeinholdings.com`. No user-facing OAuth.
+- ~~**Service Account + Workspace Domain-Wide Delegation** is the only backend auth.~~ **Replaced by user OAuth (2026-05-15)** — see §13. The app holds AES-256-GCM-encrypted refresh tokens for `contracts@tradeinholdings.com` and `pm@tradeinholdings.com` and acts as those accounts directly. No DWD step.
 - **Layered code**: route handlers → services → (Google clients | DB repos). Each layer has one job; nothing reaches across.
 
 ## 2. Locked decisions
@@ -21,10 +21,10 @@ Replace the accreted (HTML → JS → Supabase → Google Cloud → Next.js) old
 |---|---|---|
 | 1 | Property data source | Postgres in Supabase (no served `TASKS.md`) |
 | 2 | DB choice | New Supabase project (already provisioned) |
-| 3 | App user auth | None. SA + DWD only |
-| 4 | App gating | None. URL is private (logged risk) |
-| 5 | Multi-mailbox | SA impersonates a typed list of mailboxes; both `@zoodealio.com` and `@tradeinholdings.com` |
-| 6 | TIH DWD setup | Follow-up task, not blocking conversion |
+| 3 | ~~App user auth~~ **Server-side OAuth bootstrap** | **Reversed 2026-05-15** — see §13. Encrypted refresh tokens for `tih-contracts` + `tih-pm` stored in Supabase. No user login flow. |
+| 4 | App gating | None for the board; `/admin/*` and `/api/cron/*` protected by `CRON_SECRET` Bearer auth. URL still treated as a shared secret. |
+| 5 | ~~Multi-mailbox via SA~~ **Multi-mailbox via OAuth bootstrap** | **Reversed 2026-05-15** — `MAILBOXES` is now a typed registry of OAuth-bootstrapped identities; each mailbox has its own encrypted refresh token. |
+| 6 | ~~TIH DWD setup~~ | **Abandoned 2026-05-15** — the OAuth pivot removes the need entirely. |
 | 7 | Scope | All 12 surfaces port; `memory/` carries as dev-context files (not in UI) |
 | 8 | Module layout | Standard Next.js: `src/app/`, `src/components/`, `src/lib/{google,db,services}` |
 | 9 | Mutations | Server Actions for UI; API routes for crons + external triggers |
@@ -274,76 +274,88 @@ Run order on cutover:
 5. Spot-check property pages.
 6. Done.
 
-## 7. Multi-mailbox SA layer
+## 7. Multi-mailbox OAuth layer (reversed from SA+DWD on 2026-05-15)
 
-`src/lib/google/mailboxes.ts`:
+`src/lib/google/mailboxes.ts` is now a typed registry of identities the app acts as via stored refresh tokens. No `domain` field — there's no longer a per-domain auth boundary.
 
 ```ts
-export type MailboxKey =
-  | 'bradley'
-  | 'tih-contracts'
-  | 'tih-pm';
+export type MailboxKey = "bradley" | "tih-contracts" | "tih-pm";
 
 export const MAILBOXES: Record<MailboxKey, {
   email: string;
   label: string;
-  domain: 'zoodealio.com' | 'tradeinholdings.com';
-  purposes: ReadonlyArray<'inspection-reports' | 'status-updates' | 'personal-thread' | 'bid-attachments'>;
+  purposes: ReadonlyArray<MailboxPurpose>;
+  scopes: ReadonlyArray<string>;
 }> = {
-  bradley:        { email: 'bradley@zoodealio.com',            label: 'Bradley',      domain: 'zoodealio.com',     purposes: ['personal-thread'] },
-  'tih-contracts':{ email: 'contracts@tradeinholdings.com',    label: 'TIH Contracts',domain: 'tradeinholdings.com',purposes: ['inspection-reports', 'status-updates', 'bid-attachments'] },
-  'tih-pm':       { email: 'pm@tradeinholdings.com',           label: 'TIH PM',       domain: 'tradeinholdings.com',purposes: ['status-updates'] },
-} as const;
+  bradley:         { email: "bradley@zoodealio.com",         label: "Bradley",       purposes: ["personal-thread"],                                          scopes: [] /* deferred — future login + Gmail write */ },
+  "tih-contracts": { email: "contracts@tradeinholdings.com", label: "TIH Contracts", purposes: ["inspection-reports","status-updates","bid-attachments"],   scopes: ["https://www.googleapis.com/auth/gmail.readonly"] },
+  "tih-pm":        { email: "pm@tradeinholdings.com",        label: "TIH PM",        purposes: ["drive-operations"],                                         scopes: ["https://www.googleapis.com/auth/drive","https://www.googleapis.com/auth/spreadsheets"] },
+};
 ```
 
-`src/lib/google/auth.ts`:
+`src/lib/google/auth.ts` exposes async client factories — they look up the encrypted refresh token, decrypt it, and hand it to a `google.auth.OAuth2` client:
 
 ```ts
-export function getGmailClient(mailbox: MailboxKey): gmail_v1.Gmail { … }
-export function getDriveClient(mailbox: MailboxKey): drive_v3.Drive { … }
-export function getSheetsClient(mailbox: MailboxKey): sheets_v4.Sheets { … }
+export async function getGmailClient(mailbox: MailboxKey):  Promise<gmail_v1.Gmail>  { … }
+export async function getDriveClient(mailbox: MailboxKey):  Promise<drive_v3.Drive>  { … }
+export async function getSheetsClient(mailbox: MailboxKey): Promise<sheets_v4.Sheets>{ … }
 ```
 
-Each call instantiates a new JWT with the right `subject` (impersonate email). The SA JSON comes from `GOOGLE_SERVICE_ACCOUNT_JSON` env var (same shape as old app).
+These are async (they hit Supabase). All call sites in `src/lib/google/gmail.ts`, `drive.ts`, `sheets.ts` use `await`.
 
-Crons specify their default mailbox by purpose:
-- `cron/gmail-sync` → `forMailboxesWithPurpose('inspection-reports', 'status-updates')`.
-- `cron/scrape-bids` → `getDriveClient('bradley')` (Drive owns the templates).
+**Token lifecycle:**
+- Bootstrap once per mailbox at `/admin/oauth`. Refresh tokens issued by Google in Production mode don't expire.
+- Tokens persist in `oauth_accounts.refresh_token_encrypted` (AES-256-GCM, key in `OAUTH_TOKEN_ENCRYPTION_KEY` env var — separate value per environment, never stored in Supabase).
+- Access tokens refresh in-memory per request via `googleapis`' built-in handling.
+- `/api/admin/oauth-verify` health-checks each mailbox by hitting `gmail.users.getProfile` or `drive.about.get` and updates `last_used_at` / `last_error`.
 
-Until `tradeinholdings.com` Workspace gets DWD configured ([memory/project_tih_workspace_dwd_followup.md](../../../.claude/projects/-Users-bradleymeyer-Desktop-coding-pm-dashboard-main/memory/project_tih_workspace_dwd_followup.md)), the TIH mailbox entries in `MAILBOXES` will fail at runtime — that's expected, and `/api/admin/mailbox-verify` will report which ones.
+**`bradley` is intentionally not bootstrapped in v1.** Empty `scopes: []` means the auth client throws if anything tries to use it. Reserved for a future personal-login flow.
 
-## 8. Environment variables
+Cron defaults:
+- `cron/gmail-sync` → runs as `tih-contracts` (inspection emails arrive in its inbox; query `subject:"Inspection Report Ready" newer_than:Nd` — no sender filter, since the actual sender is Inspectify).
+- Drive helpers default to `tih-pm` — all Drive copies, folder creation, and template ops run as pm@.
 
-| Key | Source | Purpose |
-|---|---|---|
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | New (paste SA JSON raw) | SA key, all Google API access |
-| `DRIVE_COMPS_TEMPLATE_ID` | Old `DRIVE_TEMPLATE_FILE_ID` | Drive file ID for Comps template |
-| `DRIVE_REMODEL_BID_TEMPLATE_ID` | Old same | Drive file ID for Remodel Bid template |
-| `DRIVE_PROJECT_TRACKER_TEMPLATE_ID` | Old same | Drive file ID for Project Tracker template |
-| `SUPABASE_URL` | New Supabase project | DB URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | New Supabase project | Server-only key |
-| `CRON_SECRET` | Generate `openssl rand -hex 32` | Auth header for crons |
-| ~~`GOOGLE_IMPERSONATE_EMAIL`~~ | — | **Removed.** Replaced by `MAILBOXES` constant |
-| ~~`KV_REST_API_URL` / `KV_REST_API_TOKEN`~~ | — | **Removed.** No more KV |
-| ~~`SUPABASE_ANON_KEY`~~ | — | **Removed.** Server-only access |
+The historical follow-up to set up DWD on `tradeinholdings.com` is **abandoned** ([`memory/project_tih_workspace_dwd_followup.md`](../../../.claude/projects/-Users-bradleymeyer-Desktop-coding-pm-dashboard-main/memory/project_tih_workspace_dwd_followup.md)). The OAuth pivot removes that dependency entirely.
+
+## 8. Environment variables (post-OAuth-pivot)
+
+| Key | Purpose |
+|---|---|
+| `OAUTH_TOKEN_ENCRYPTION_KEY` | 32 bytes (base64) for AES-256-GCM encryption of refresh tokens. Generate with `openssl rand -base64 32`. **Different value per environment** — losing it requires re-bootstrap (~5 min). |
+| `GOOGLE_CLIENT_ID` | OAuth client ID from the GCP `PPM-Dashboard` project. Shared across environments. |
+| `GOOGLE_CLIENT_SECRET` | OAuth client secret. Sensitive. |
+| `GOOGLE_REDIRECT_URI` | `http://localhost:3000/api/oauth/callback` locally; `https://<vercel-url>/api/oauth/callback` in prod. Must match a URI registered on the OAuth client. |
+| `DRIVE_TEMPLATE_FILE_ID` | Comps template (file owned by `pm@`, lives in `Properties/_Templates/`) |
+| `DRIVE_REMODEL_BID_TEMPLATE_FILE_ID` | Remodel Bid template (same location) |
+| `DRIVE_PROJECT_TRACKER_TEMPLATE_FILE_ID` | Project Tracker template (same location) |
+| `SUPABASE_URL` | DB URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only DB key |
+| `CRON_SECRET` | Bearer header for `/api/cron/*` + `/api/admin/*` routes. Generate with `openssl rand -hex 32`. |
+| ~~`GOOGLE_SERVICE_ACCOUNT_JSON`~~ | **Removed 2026-05-15** — the OAuth pivot eliminates the SA. Can be deleted from `.env.local` and Vercel. |
+| ~~`GOOGLE_IMPERSONATE_EMAIL`~~ | **Removed.** Replaced by `MAILBOXES` constant. |
+| ~~`KV_REST_API_URL` / `KV_REST_API_TOKEN`~~ | **Removed.** No KV. |
+| ~~`SUPABASE_ANON_KEY`~~ | **Removed.** Server-only access. |
 
 ## 9. Cron schedule (`vercel.ts`)
 
 ```ts
-import type { VercelConfig } from '@vercel/config/v1';
+import type { VercelConfig } from "@vercel/config/v1";
 
 export const config: VercelConfig = {
   crons: [
-    { path: '/api/cron/gmail-sync',   schedule: '0 * * * *' },
-    { path: '/api/cron/scrape-bids',  schedule: '0 2 * * *' },
-    { path: '/api/cron/token-health', schedule: '0 9 * * *' },
+    { path: "/api/cron/gmail-sync",   schedule: "0 8 * * *" },  // daily 08:00 UTC
+    { path: "/api/cron/scrape-bids",  schedule: "0 2 * * *" },  // daily 02:00 UTC (deferred — see §15)
+    { path: "/api/cron/token-health", schedule: "0 9 * * *" },  // daily — hits getProfile/about for each bootstrapped mailbox
+    { path: "/api/cron/auto-close",   schedule: "0 7 * * *" },  // daily — auto-closes ready-for-listing after 2 days idle
   ],
   functions: {
-    'app/api/cron/scrape-bids/route.ts':  { maxDuration: 300 },
-    'app/api/admin/scrape-bids/route.ts': { maxDuration: 300 },
+    "app/api/cron/scrape-bids/route.ts":  { maxDuration: 300 },
+    "app/api/admin/scrape-bids/route.ts": { maxDuration: 300 },
   },
 };
 ```
+
+The gmail-sync cron route also accepts query params `?sinceDays=N` and `?dry=true` for bulk historical sweeps via curl.
 
 ## 10. Implementation phases
 
@@ -400,16 +412,149 @@ The work is staged so each phase ends with something runnable.
 **Post-conversion follow-up (separate session)**
 - Walk through TIH Workspace DWD setup. See [memory/project_tih_workspace_dwd_followup.md](../../../.claude/projects/-Users-bradleymeyer-Desktop-coding-pm-dashboard-main/memory/project_tih_workspace_dwd_followup.md).
 
-## 11. Known risks
+## 11. Known risks (current)
 
-1. **No app gate** — explicit user decision; the deployed URL has full Gmail-read / Drive-write powers. Treat the URL as a shared secret. Captured in [memory/feedback_no_app_gate.md](../../../.claude/projects/-Users-bradleymeyer-Desktop-coding-pm-dashboard-main/memory/feedback_no_app_gate.md).
-2. **TIH DWD not yet configured** — TIH mailbox impersonation will fail until follow-up. App handles this gracefully (the Mailbox Verify route reports per-mailbox status).
-3. **Hard cutover** — there will be a "between the old app and the new app" moment. Mitigation: keep the old app available read-only (`PPMDashboard` still on disk) for one week post-cutover.
-4. **Address parsing edge cases** — `TASKS.md` addresses are hand-typed; migration script must handle missing state/zip, missing comma, etc. Migration script has `--dry-run`.
-5. **Bid scraper coverage** — historical bids live across multiple Drive accounts. The scraper needs the SA to have access to each. May require explicit share grants or DWD impersonation of the bid owners.
+1. **No board-level app gate** — the deployed URL has full Gmail-read / Drive-write powers via the stored refresh tokens. Treat the URL as a shared secret ([`memory/feedback_no_app_gate.md`](../../../.claude/projects/-Users-bradleymeyer-Desktop-coding-pm-dashboard-main/memory/feedback_no_app_gate.md)). The `/admin/oauth` page lets anyone with the URL trigger a (re)bootstrap, but the OAuth callback validates that the consenting email matches the expected mailbox before storing — an attacker can't bootstrap a wrong account into a slot.
+2. ~~TIH DWD not yet configured~~ — **Resolved.** The OAuth pivot removes this dependency. See [`memory/project_tih_workspace_dwd_followup.md`](../../../.claude/projects/-Users-bradleymeyer-Desktop-coding-pm-dashboard-main/memory/project_tih_workspace_dwd_followup.md).
+3. **Encryption key loss** — losing `OAUTH_TOKEN_ENCRYPTION_KEY` makes the stored refresh tokens unrecoverable. Recovery is bounded: re-bootstrap each mailbox via `/admin/oauth` (~5 min total). The Vercel env var is the single source of truth; back it up out-of-band if desired.
+4. **PDF/Turbopack incompatibility** — `pdfjs-dist` (used by `pdf-parse`) doesn't run inside Next.js's Turbopack-bundled server routes because its fake-worker setup rewrites paths. The Gmail-PDF bid backfill therefore runs as a **standalone tsx script** (`scripts/backfill-bids.ts`) rather than an admin route. The `/api/cron/scrape-bids` route still exists but points at the legacy Drive walker — wiring it to the new logic is deferred. See §15.
+5. **Inspection-email body parser is format-strict** — `extractField()` expects `*Label:* value` (markdown-asterisk format). Older inspection emails without that format add as `inspection-received` with an address slug only; manual fill-in required.
+6. **Address parsing edge case** — at least one gmail-sync candidate has been observed with the slug literally `"address"` (the parser picked up the word). Flagged for a future cleanup; not auto-applied to the board.
 
 ## 12. Open items
 
-- Confirm full list of mailboxes needed (currently planning: `bradley`, `tih-contracts`, `tih-pm` — are there others?).
-- Confirm whether `est_repair` should be migrated from anywhere (it's referenced in CLAUDE.md but absent from current `TASKS.md`).
-- Decide whether to keep the local `Inspection Reports/` folder as a dev convenience (recommend: yes, gitignored).
+- ~~Confirm full list of mailboxes~~ — settled: `bradley` (deferred), `tih-contracts`, `tih-pm`. `accounting@tih` was dropped.
+- ~~Confirm `est_repair` migration source~~ — `est_repair_cents` column shipped; filled per-property via the property page UI.
+- ~~Keep the local `Inspection Reports/` folder~~ — yes, gitignored.
+- **`/api/cron/scrape-bids` rewrite** — currently uses the legacy Drive walker. Should be re-pointed at the Gmail-PDF backfill logic once we either (a) externalize `pdfjs-dist` from Turbopack reliably or (b) switch to a different PDF parser that doesn't need workers.
+- **Slack integration for closing detection** — closings happen in `#acq-dis-properties`, not email. A `/api/slack/events` endpoint that listens for Joseph's "officially closed on X" posts is a clean follow-on once we're ready to deal with another OAuth flow.
+
+---
+
+## 13. OAuth bootstrap (added 2026-05-15)
+
+Replaces what was originally §3 of the locked decisions ("None. SA + DWD only"). Full design doc: [`OAUTH_PIVOT_PLAN.md`](./OAUTH_PIVOT_PLAN.md). Revocation procedure: [`oauth-revocation.md`](./oauth-revocation.md).
+
+**GCP setup (External Production, unverified):**
+- Single `PPM-Dashboard` GCP project owned by Zoodealio.
+- OAuth consent screen: **External + Production**. Restricted scopes (`gmail.readonly`, `drive`) are accessible via the "unverified app → Advanced → Continue" warning bypass. No CASA verification needed.
+- Authorized redirect URIs include `http://localhost:3000/api/oauth/callback` and the Vercel URL's callback path.
+
+**Bootstrap UX (`/admin/oauth`):**
+- Server component lists each `MailboxKey` with status — bootstrapped / not-connected / deferred / revoked, plus `granted_at` / `last_used_at` / scopes / last error.
+- "Connect" buttons hit `/api/oauth/start?mailbox=<key>` which:
+  1. Builds a state token = `<random>:<mailbox-key>`, sets it as an HttpOnly cookie (10-min TTL).
+  2. Redirects to Google's consent URL with `access_type=offline`, `prompt=consent`, the mailbox's scopes, and `login_hint=<email>`.
+- `/api/oauth/callback` verifies state, exchanges the code, **confirms the consenting email matches the expected mailbox** via the granted scope's identity API (Gmail uses `users.getProfile`, Drive uses `about.get`), then writes the encrypted token + scopes to `oauth_accounts`.
+
+**Token storage schema** (`supabase/migrations/0003_oauth_accounts.sql`):
+```sql
+create table oauth_accounts (
+  id                      uuid primary key default gen_random_uuid(),
+  mailbox_key             text unique not null,
+  email                   text not null,
+  refresh_token_encrypted text not null,  -- AES-256-GCM via src/lib/crypto/envelope.ts
+  scopes                  text[] not null,
+  granted_at              timestamptz not null default now(),
+  last_used_at            timestamptz,
+  last_error              text,
+  revoked_at              timestamptz
+);
+```
+
+**Encryption helper (`src/lib/crypto/envelope.ts`):** AES-256-GCM, 12-byte IV, 16-byte tag, payload format is base64(iv || tag || ciphertext). Round-trip tested.
+
+## 14. Drive folder structure (added 2026-05-15)
+
+`pm@tradeinholdings.com`'s My Drive holds everything the app creates:
+
+```
+Properties/
+├── _Templates/                          ← 3 templates owned by pm@; DRIVE_*_TEMPLATE_FILE_ID env vars point here
+│   ├── Comps/Inspection Report - Template
+│   ├── Remodel Bid - Template
+│   └── Project Tracker - Template
+├── 8834 Judwin St, Houston TX 77075/    ← per-property folder, full address as name
+│   └── Docs/                            ← app-generated artifacts go here
+│       ├── Comps - 8834 Judwin St, ...
+│       ├── Remodel Bid - 8834 Judwin St, ...
+│       ├── Project Tracker - 8834 Judwin St, ...
+│       └── CMA - 8834 Judwin St, ...    ← when copied via Gmail Sync v2's CMA detection
+├── Cancelled/   ← Drive folders auto-move here on cancelProperty()
+└── Closed/      ← Drive folders auto-move here on closeProperty()
+```
+
+- **Lookup is by `properties.drive_folder_id`**, not by name — renames in Drive don't break the link.
+- **Lazy creation** via `ensurePropertyFolder(slug)` in `src/lib/google/drive.ts` — runs the first time any Drive op touches a property.
+- **`Properties/` root** and bucket folders (`_Templates/`, `Cancelled/`, `Closed/`) are auto-created on first use; their IDs are cached in-process.
+- **`copyTemplate(templateId, name, destinationFolderId)`** in `drive.ts` copies into `Properties/<addr>/Docs/` as pm@.
+- **CMA copy:** Gmail Sync v2 detects emails with `subject:CMA` from contracts@ that contain a `docs.google.com/spreadsheets` URL. On approval, `copyCmaToPropertyDocs(slug, sourceUrl)` in `src/lib/services/cma-copy.ts` copies the Sheet into the property's Docs folder. Requires the source sheet to be shared with `pm@`; if not, the sync modal surfaces a clear error.
+
+## 15. Terminal pipeline states (added 2026-05-15)
+
+The pipeline now has terminal states beyond `ready-for-listing`:
+
+```sql
+-- 0004_terminal_states.sql adds:
+stage_changed_at timestamptz not null default now(),
+cancelled_at     timestamptz,
+cancelled_reason text,
+closed_at        timestamptz,
+```
+
+Plus a trigger `properties_set_stage_changed_at` that bumps `stage_changed_at` whenever `stage` changes (NOT when other fields change — important for the auto-close cron).
+
+**Stage IDs:**
+- Pipeline: `inspection-received` < `inspection-under-review` < `exec-final-review` < `addendum-sent` < `title` < `contract-work` < `ready-for-listing`
+- Terminal: `cancelled`, `closed`
+
+**Lifecycle actions** (`src/lib/services/property-lifecycle.ts`):
+- `cancelPropertyService({slug, reason})` — requires reason ≥ 5 chars; sets stage + cancelled_at + cancelled_reason; moves Drive folder to `Properties/Cancelled/`. Reversible via `restoreFromTerminalService` (audit columns persist).
+- `closePropertyService(slug)` — sets stage + closed_at; moves Drive folder to `Properties/Closed/`.
+- `findAutoCloseCandidates(cutoff)` — used by the auto-close cron; selects `ready-for-listing` rows where `stage_changed_at < now - 2 days`.
+
+**UI** (`src/components/property/PropertyLifecycle.tsx`):
+- Red destructive "Lifecycle" section at the bottom of the property page.
+- "Mark Closed" button visible only on `ready-for-listing` rows.
+- "Cancel Property" form with required reason textarea.
+- For terminal-state rows: a "Restore to" selector lists pipeline stages.
+
+**xlsx sync stage mapping** (Acquisition Escrows Status col A + AM/AN/AO progression — see [`OAUTH_PIVOT_PLAN.md`](./OAUTH_PIVOT_PLAN.md) follow-up notes):
+- Status="Inspection Period": AO=Yes → addendum-sent; AN=Yes → exec-final-review; AM=Yes + assignee → inspection-under-review; else inspection-received.
+- Status="Inspect Add Sent" → addendum-sent.
+- Status ∈ {Need Funding, Funding On Hold, Closing/No Reno, Closing/Reno} → title.
+- Listings sheet col A: Sold → closed, Reno In Process / Late Checkout / etc. → contract-work, Active / Under Contract / Waiting to Relist → ready-for-listing.
+
+## 16. Bid backfill from Gmail PDFs (added 2026-05-15)
+
+`scripts/backfill-bids.ts` — self-contained tsx script (runs outside Next.js so it bypasses the Turbopack/pdfjs worker resolution issue). Walks `contracts@`'s Gmail with `remodel bid after:YYYY/MM/DD`, extracts PDF attachments, parses with `pdf-parse` v2, extracts Sheets URLs from message bodies (as a secondary source), and upserts to `bids` + `bid_line_items`.
+
+**Schema deltas** (`0005_bids_source_split.sql`):
+- Drops the original `unique (drive_file_id, tab_name)` constraint (gmail-sourced rows have neither).
+- Adds two partial uniques:
+  - `bids_sheet_uniq` on `(drive_file_id, tab_name) WHERE source = 'sheet'`
+  - `bids_gmail_uniq` on `(gmail_message_id, tab_name) WHERE source = 'gmail'`
+- Makes `drive_file_id` and `drive_url` nullable.
+- Adds `original_drive_url text` (courtesy reference to the Sheets URL parsed from the email body — not fetched).
+
+**Dedup strategy:**
+- Partial uniques catch same-file-in-multiple-emails for both sources.
+- Cross-message PDF content duplicates (same PDF re-attached in different emails) are caught by in-process **SHA-256 content hashing** during the script run.
+
+**Address extraction (priority order):**
+1. Filename pattern `Remodel Bid - <address>` (most reliable).
+2. Sheet name (if pm@ has Drive read access).
+3. Email subject pattern.
+4. PDF body first non-numeric line.
+5. Various noise suffixes get stripped (`(1)`, `- Invoice`, `- Revised`, etc.).
+
+**Run:**
+```bash
+tsx scripts/backfill-bids.ts --since=2023-01-01 [--limit=N] [--dry-run]
+```
+
+**Known limits:**
+- Most older inspection emails predate the structured `*Field:*` body format, so `purchase_cents` / `clr_cents` / `reserve_pct` parse to null for many backfilled bids.
+- Sheets that aren't shared with pm@ still get a row but no line items — full-text search on the email body (stored as `raw_text`) keeps them discoverable in `/bids`.
+
+**Daily cron (deferred):** `/api/cron/scrape-bids` currently still uses the legacy Drive walker. Re-pointing it at the Gmail-PDF logic requires solving the pdfjs/Turbopack interop — see §11 risk #4.

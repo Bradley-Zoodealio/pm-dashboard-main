@@ -1,22 +1,14 @@
-import { findFilesForAddress, type DriveFileRow } from "@/lib/google/drive";
+import {
+  ensurePropertyFolder,
+  listFilesInDocsFolder,
+  type DriveFileRow,
+} from "@/lib/google/drive";
 import type { PropertyRow } from "@/lib/db/properties";
-
-function streetPart(address: string): string {
-  return address.split(",")[0].trim();
-}
 
 function extractFileIdFromUrl(url: string | null): string | null {
   if (!url) return null;
   const m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
   return m ? m[1] : null;
-}
-
-function templateIds(): string[] {
-  return [
-    process.env.DRIVE_TEMPLATE_FILE_ID,
-    process.env.DRIVE_REMODEL_BID_TEMPLATE_FILE_ID,
-    process.env.DRIVE_PROJECT_TRACKER_TEMPLATE_FILE_ID,
-  ].filter((x): x is string => !!x);
 }
 
 function mimeLabel(mime: string): string {
@@ -29,20 +21,27 @@ function mimeLabel(mime: string): string {
 }
 
 export async function PropertyDocuments({ property }: { property: PropertyRow }) {
-  const exclude = [
-    ...templateIds(),
-    ...[property.comps_url, property.remodel_bid_url, property.project_tracker_url]
+  // Files explicitly linked on the property row don't need to appear in the
+  // Documents list — they're already surfaced in the dedicated buttons above.
+  const linkedIds = new Set(
+    [property.comps_url, property.remodel_bid_url, property.project_tracker_url, property.cma_url]
       .map(extractFileIdFromUrl)
       .filter((x): x is string => !!x),
-  ];
+  );
 
+  let folderId = property.drive_folder_id;
   let files: DriveFileRow[] = [];
   let error: string | null = null;
   try {
-    files = await findFilesForAddress(streetPart(property.address), exclude);
+    // Lazy creation: if the property has never had a Drive op, this creates
+    // Properties/<address>/ now so the Documents list has a stable home.
+    if (!folderId) folderId = await ensurePropertyFolder(property.slug);
+    files = await listFilesInDocsFolder(folderId);
   } catch (err) {
     error = (err as Error).message;
   }
+
+  const visible = files.filter((f) => !linkedIds.has(f.id));
 
   return (
     <section className="rounded-lg border border-border bg-card p-4">
@@ -51,13 +50,13 @@ export async function PropertyDocuments({ property }: { property: PropertyRow })
       </h2>
       {error ? (
         <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
-      ) : files.length === 0 ? (
+      ) : visible.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No other Drive files match this address.
+          No additional files in this property&apos;s Drive folder yet.
         </p>
       ) : (
         <ul className="flex flex-col gap-1 text-sm">
-          {files.map((f) => (
+          {visible.map((f) => (
             <li key={f.id} className="flex items-center justify-between gap-3">
               <a
                 href={f.webViewLink}

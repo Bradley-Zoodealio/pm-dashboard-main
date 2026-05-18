@@ -19,7 +19,7 @@ export async function checkAllMailboxes(): Promise<MailboxHealth[]> {
     return {
       key,
       email: mb.email,
-      domain: mb.domain,
+      domain: mb.email.split("@")[1] ?? "",
       ok: result.ok,
       emailAddress: result.emailAddress,
       error: result.error,
