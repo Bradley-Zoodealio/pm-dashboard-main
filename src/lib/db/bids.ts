@@ -59,6 +59,27 @@ export async function upsertBid(row: BidUpsert): Promise<string> {
   return data.id;
 }
 
+// Insert a gmail-sourced bid row, gracefully returning {duplicate: true} when
+// the bids_gmail_uniq partial index rejects a duplicate (gmail_message_id,
+// tab_name) for source='gmail'. Used by the PDF backfill which has its own
+// dedup semantics distinct from Drive sheets.
+export async function insertGmailBid(
+  row: BidUpsert,
+): Promise<{ id: string | null; duplicate: boolean }> {
+  const { data, error } = await getSupabase()
+    .from("bids")
+    .insert(row)
+    .select("id")
+    .single();
+  if (error) {
+    if (error.code === "23505") {
+      return { id: null, duplicate: true };
+    }
+    throw error;
+  }
+  return { id: data.id, duplicate: false };
+}
+
 export async function replaceLineItems(
   bidId: string,
   items: Array<{ position: number; description: string; total: number | null; is_footer: boolean }>,

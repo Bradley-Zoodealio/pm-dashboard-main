@@ -22,6 +22,13 @@ export interface PropertyRow {
   project_tracker_url: string | null;
   arv_cents: number | null;
   est_repair_cents: number | null;
+  program_fee_pct: number | null;
+  resale_fee_pct: number | null;
+  drive_folder_id: string | null;
+  stage_changed_at: string;
+  cancelled_at: string | null;
+  cancelled_reason: string | null;
+  closed_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -118,6 +125,9 @@ export interface PropertyInsert {
   project_tracker_url?: string | null;
   arv_cents?: number | null;
   est_repair_cents?: number | null;
+  program_fee_pct?: number | null;
+  resale_fee_pct?: number | null;
+  drive_folder_id?: string | null;
 }
 
 export async function insertProperty(row: PropertyInsert): Promise<PropertyRow> {

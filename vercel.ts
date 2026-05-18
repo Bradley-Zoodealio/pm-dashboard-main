@@ -5,6 +5,7 @@ export const config: VercelConfig = {
     { path: "/api/cron/gmail-sync", schedule: "0 8 * * *" },
     { path: "/api/cron/scrape-bids", schedule: "0 2 * * *" },
     { path: "/api/cron/token-health", schedule: "0 9 * * *" },
+    { path: "/api/cron/auto-close", schedule: "0 7 * * *" },
   ],
   functions: {
     "app/api/cron/scrape-bids/route.ts": { maxDuration: 300 },

@@ -19,6 +19,8 @@ const EDITABLE_FIELDS = [
   "purchase_cents",
   "clr_cents",
   "reserve_pct",
+  "program_fee_pct",
+  "resale_fee_pct",
   "inspect_date",
   "assignee",
   "inspect_url",
@@ -65,7 +67,11 @@ function parseValueFor(field: EditableField, raw: string): unknown {
     const cents = Math.round(parseFloat(trimmed.replace(/[^0-9.-]/g, "")) * 100);
     return Number.isFinite(cents) ? cents : null;
   }
-  if (field === "reserve_pct") {
+  if (
+    field === "reserve_pct" ||
+    field === "program_fee_pct" ||
+    field === "resale_fee_pct"
+  ) {
     if (trimmed === "") return null;
     const n = parseFloat(trimmed.replace(/[^0-9.-]/g, ""));
     return Number.isFinite(n) ? n : null;

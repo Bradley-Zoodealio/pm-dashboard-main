@@ -15,7 +15,7 @@ export async function verifyAccess(
   mailbox: MailboxKey,
 ): Promise<{ ok: boolean; emailAddress?: string; error?: string }> {
   try {
-    const gmail = getGmailClient(mailbox);
+    const gmail = await getGmailClient(mailbox);
     const { data } = await gmail.users.getProfile({ userId: "me" });
     return { ok: true, emailAddress: data.emailAddress ?? undefined };
   } catch (e) {
@@ -26,29 +26,43 @@ export async function verifyAccess(
 export async function listThreads(
   q: string,
   mailbox: MailboxKey,
-  maxResults = 50,
+  cap = 500,
 ): Promise<ThreadHeader[]> {
-  const gmail = getGmailClient(mailbox);
-  const { data } = await gmail.users.threads.list({ userId: "me", q, maxResults });
+  const gmail = await getGmailClient(mailbox);
   const out: ThreadHeader[] = [];
-  for (const t of data.threads ?? []) {
-    if (!t.id) continue;
-    const detail = await gmail.users.threads.get({
+  let pageToken: string | undefined;
+  // Page through results until we hit the cap. Gmail allows up to 500
+  // threads per page; without pagination an inspection-report sweep at
+  // sinceDays > 60 would silently miss older threads.
+  do {
+    const { data } = await gmail.users.threads.list({
       userId: "me",
-      id: t.id,
-      format: "metadata",
-      metadataHeaders: ["Subject", "Date", "From"],
+      q,
+      maxResults: Math.min(500, cap - out.length),
+      pageToken,
     });
-    const firstMsg = detail.data.messages?.[0];
-    if (!firstMsg) continue;
-    const headers = firstMsg.payload?.headers ?? [];
-    out.push({
-      threadId: t.id,
-      subject: header(headers, "subject"),
-      date: header(headers, "date"),
-      from: header(headers, "from"),
-    });
-  }
+    for (const t of data.threads ?? []) {
+      if (!t.id) continue;
+      const detail = await gmail.users.threads.get({
+        userId: "me",
+        id: t.id,
+        format: "metadata",
+        metadataHeaders: ["Subject", "Date", "From"],
+      });
+      const firstMsg = detail.data.messages?.[0];
+      if (!firstMsg) continue;
+      const headers = firstMsg.payload?.headers ?? [];
+      out.push({
+        threadId: t.id,
+        subject: header(headers, "subject"),
+        date: header(headers, "date"),
+        from: header(headers, "from"),
+      });
+      if (out.length >= cap) break;
+    }
+    pageToken = data.nextPageToken ?? undefined;
+    if (out.length >= cap) break;
+  } while (pageToken);
   return out;
 }
 
@@ -56,7 +70,7 @@ export async function getThread(
   threadId: string,
   mailbox: MailboxKey,
 ): Promise<gmail_v1.Schema$Thread> {
-  const gmail = getGmailClient(mailbox);
+  const gmail = await getGmailClient(mailbox);
   const { data } = await gmail.users.threads.get({
     userId: "me",
     id: threadId,

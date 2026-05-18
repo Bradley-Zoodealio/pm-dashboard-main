@@ -150,9 +150,9 @@ export function SyncButton() {
 }
 
 function itemKey(item: PlanItem): string {
-  return item.type === "add"
-    ? `add:${item.threadId}`
-    : `move:${item.slug}:${item.toStage}`;
+  if (item.type === "add") return `add:${item.threadId}`;
+  if (item.type === "move") return `move:${item.slug}:${item.toStage}`;
+  return `copy-cma:${item.slug}`;
 }
 
 function PlanItemRow({ item }: { item: PlanItem }) {
@@ -168,6 +168,9 @@ function PlanItemRow({ item }: { item: PlanItem }) {
         <div className="mt-1 text-xs text-muted-foreground">
           → {labelFor(item.toStage)}
           {item.note && <span className="ml-2">· {item.note}</span>}
+          {item.copyCma && (
+            <span className="ml-2">· will copy CMA Sheet to Docs/</span>
+          )}
         </div>
         <a
           href={`https://mail.google.com/mail/u/0/#all/${item.threadId}`}
@@ -176,6 +179,29 @@ function PlanItemRow({ item }: { item: PlanItem }) {
           className="mt-1 inline-block text-xs text-primary hover:underline"
         >
           open thread ↗
+        </a>
+      </div>
+    );
+  }
+  if (item.type === "copy-cma") {
+    return (
+      <div>
+        <div>
+          <span className="rounded bg-violet-100 px-1.5 py-0.5 text-xs font-medium text-violet-900 dark:bg-violet-950/60 dark:text-violet-200">
+            COPY CMA
+          </span>{" "}
+          <span className="font-medium">{item.address}</span>
+        </div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          copy CMA Sheet into property&apos;s Docs/ folder
+        </div>
+        <a
+          href={item.sourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-1 inline-block text-xs text-primary hover:underline"
+        >
+          source sheet ↗
         </a>
       </div>
     );

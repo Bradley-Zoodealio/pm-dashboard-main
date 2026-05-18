@@ -2,7 +2,9 @@ import "server-only";
 
 import {
   copyTemplate,
-  findTemplateCopiesForAddress,
+  ensureDocsSubfolder,
+  ensurePropertyFolder,
+  findFileByNameInFolder,
   type DriveFileResult,
 } from "@/lib/google/drive";
 import {
@@ -21,7 +23,6 @@ export type EnsureResult =
 
 interface TemplateConfig {
   envVar: string;
-  searchKeyword: string;
   fileNameFor(address: string): string;
   field: PropertyField;
 }
@@ -29,27 +30,20 @@ interface TemplateConfig {
 const CONFIGS: Record<TemplateKind, TemplateConfig> = {
   comps: {
     envVar: "DRIVE_TEMPLATE_FILE_ID",
-    searchKeyword: "Inspection Report",
-    fileNameFor: (a) => `Comps/Inspection Report - ${a}`,
+    fileNameFor: (a) => `Comps - ${a}`,
     field: "comps_url",
   },
   "remodel-bid": {
     envVar: "DRIVE_REMODEL_BID_TEMPLATE_FILE_ID",
-    searchKeyword: "Remodel Bid",
     fileNameFor: (a) => `Remodel Bid - ${a}`,
     field: "remodel_bid_url",
   },
   "project-tracker": {
     envVar: "DRIVE_PROJECT_TRACKER_TEMPLATE_FILE_ID",
-    searchKeyword: "Project Tracker",
     fileNameFor: (a) => `Project Tracker - ${a}`,
     field: "project_tracker_url",
   },
 };
-
-function streetPart(address: string): string {
-  return address.split(",")[0].trim();
-}
 
 function existingUrl(property: PropertyRow, kind: TemplateKind): string | null {
   if (kind === "comps") return property.comps_url;
@@ -57,6 +51,12 @@ function existingUrl(property: PropertyRow, kind: TemplateKind): string | null {
   return property.project_tracker_url;
 }
 
+// Resolve a property's Drive artifact (Comps / Remodel Bid / Project Tracker).
+// Order of preference:
+//   1. URL already linked on the property row — reuse.
+//   2. A file with the canonical name already in Properties/<addr>/Docs/ — link + reuse.
+//   3. Otherwise, copy the template into Docs/.
+// Folders are created lazily via ensurePropertyFolder + ensureDocsSubfolder.
 export async function ensureDriveTemplate(
   slug: string,
   kind: TemplateKind,
@@ -75,33 +75,29 @@ export async function ensureDriveTemplate(
     return { url: linked, reused: "linked" };
   }
 
-  const fragment = streetPart(property.address);
-  let driveResult: DriveFileResult | null = null;
-  try {
-    const matches = await findTemplateCopiesForAddress(
-      fragment,
-      cfg.searchKeyword,
-      templateId,
-    );
-    if (matches.length > 0) {
-      driveResult = matches[0];
-      await updatePropertyField(slug, cfg.field, driveResult.webViewLink as never);
-      return {
-        url: driveResult.webViewLink,
-        reused: "drive",
-        name: driveResult.name,
-        matchCount: matches.length,
-      };
-    }
-  } catch (err) {
-    console.error(
-      `[drive-templating] search failed for ${kind}; falling through to copy:`,
-      (err as Error).message,
-    );
+  const propertyFolderId = await ensurePropertyFolder(slug);
+  const docsFolderId = await ensureDocsSubfolder(propertyFolderId);
+  const targetName = cfg.fileNameFor(property.address);
+
+  let resolved: DriveFileResult;
+  let reusedFromDrive = false;
+
+  const existing = await findFileByNameInFolder(docsFolderId, targetName);
+  if (existing) {
+    resolved = existing;
+    reusedFromDrive = true;
+  } else {
+    resolved = await copyTemplate(templateId, targetName, docsFolderId);
   }
 
-  const created = await copyTemplate(templateId, cfg.fileNameFor(property.address));
-  await updatePropertyField(slug, cfg.field, created.webViewLink as never);
+  await updatePropertyField(slug, cfg.field, resolved.webViewLink as never);
 
-  return { url: created.webViewLink, reused: false, name: created.name };
+  return reusedFromDrive
+    ? {
+        url: resolved.webViewLink,
+        reused: "drive",
+        name: resolved.name,
+        matchCount: 1,
+      }
+    : { url: resolved.webViewLink, reused: false, name: resolved.name };
 }

@@ -1,7 +1,6 @@
 import "server-only";
 
 import {
-  decodeBase64Url,
   extractPlaintextBody,
   getThread,
   header,
@@ -19,9 +18,21 @@ import {
   type PropertyRow,
 } from "@/lib/db/properties";
 import { getSupabase } from "@/lib/db/supabase";
+import { copyCmaToPropertyDocs, extractSheetIdFromUrl } from "./cma-copy";
 import type { StageId } from "@/lib/services/stages";
 
-// ── Detection regexes (ported verbatim from old PPMDashboard) ────────────────
+// ── Detection regexes ────────────────────────────────────────────────────────
+//
+// OAuth pivot (2026-05-15): the sync now runs as `tih-contracts` (not
+// `bradley@`). Inspection emails are in contracts@'s SENT folder; team
+// replies (remodel-bid responses, addendum confirmations) are in its INBOX.
+// Inside the thread, every message keeps its original From: header so the
+// existing per-message detection logic still works.
+//
+// Closing-confirmed detection was DROPPED — closings now happen via Joseph's
+// Slack post in #acq-dis-properties, not email. The CLOSING_VERB_RE regex is
+// kept *only* for getThreadActivity display, so historical threads that DO
+// contain closing emails still get labeled correctly.
 
 const SUBJECT_PATTERN = /Inspection Report Ready for Viewing\s*-\s*(.+?)$/i;
 const TEAM_DOMAIN = "@zoodealio.com";
@@ -32,11 +43,8 @@ const ADDENDUM_COMPLETION_RE =
   /\baddendum\b[\s\S]{0,200}?(signed|completed|executed|countersigned|all parties)/i;
 const CLOSING_VERB_RE =
   /\bofficially closed\b|\bclosing (?:has been )?(?:completed|finalized)\b|\bwe (?:are|have) (?:officially )?closed\b|\bclear to close\b|\bclose of escrow\b/i;
-const LOCKBOX_COMBO_RE = /\bcombo[:\s]*(\d{3,6})\b/i;
-const LOCKBOX_LOCATION_RE =
-  /\blockbox(?:\s+is)?\s+(?:on the\s+|at the\s+|on\s+|in the\s+|at\s+)?([a-z0-9\s]+?(?:side|back|front|porch|door|gate|patio|garage|fence)[a-z0-9\s]*?(?:of the (?:house|home|property))?)\b/i;
 
-// ── Helpers for the labeled "*Field:* value" inspection email body ───────────
+// ── Body field extractors (labels of the form "*Field:* value") ──────────────
 
 function extractField(body: string, label: string): string {
   const re = new RegExp(`\\*${label}:[^*]*\\*\\s*(?:\\*)?([^\\n*]*)`, "i");
@@ -71,7 +79,9 @@ function extractInspectifyUrl(body: string): string | null {
 }
 
 function extractCmaUrl(body: string): string | null {
-  const m = body.match(/CMA Sheet[^<]*<(https?:\/\/docs\.google\.com\/spreadsheets\/[^>]+)>/i);
+  const m = body.match(
+    /CMA Sheet[^<]*<(https?:\/\/docs\.google\.com\/spreadsheets\/[^>]+)>/i,
+  );
   if (m) {
     return m[1].split("#")[0].split("?")[0].replace(/\/edit.*$/, "/edit");
   }
@@ -217,40 +227,10 @@ async function detectAddendumSigned(
   return { signed: false };
 }
 
-export interface ClosingSignal {
-  closed: boolean;
-  byWho?: string;
-  date?: string;
-  lockboxCombo?: string;
-  lockboxLocation?: string;
-}
-
-async function detectClosingConfirmed(
-  threadId: string,
-  mailbox: MailboxKey,
-): Promise<ClosingSignal> {
-  const data = await getThread(threadId, mailbox);
-  const messages = data.messages ?? [];
-  for (let i = 1; i < messages.length; i++) {
-    const msg = messages[i];
-    const from = header(msg.payload?.headers ?? undefined, "from");
-    const date = header(msg.payload?.headers ?? undefined, "date");
-    const body = extractPlaintextBody(msg);
-    if (!CLOSING_VERB_RE.test(body)) continue;
-    const combo = body.match(LOCKBOX_COMBO_RE);
-    const loc = body.match(LOCKBOX_LOCATION_RE);
-    return {
-      closed: true,
-      byWho: senderName(from),
-      date,
-      lockboxCombo: combo?.[1],
-      lockboxLocation: loc?.[1]?.trim(),
-    };
-  }
-  return { closed: false };
-}
-
 // ── Activity timeline ────────────────────────────────────────────────────────
+//
+// Closing-confirmed branch left intact for *display* of historical threads
+// that contain closing emails (rare — most closings are Slack-only).
 
 export type ActivityEventType =
   | "inspection-received"
@@ -270,7 +250,7 @@ export interface ActivityEvent {
 
 export async function getThreadActivity(
   threadId: string,
-  mailbox: MailboxKey = "bradley",
+  mailbox: MailboxKey = "tih-contracts",
 ): Promise<ActivityEvent[]> {
   const data = await getThread(threadId, mailbox);
   const messages = data.messages ?? [];
@@ -323,6 +303,7 @@ export interface PlanItemAdd {
   toStage: StageId;
   fields: PropertyInsert;
   note?: string;
+  copyCma?: { sourceUrl: string };
 }
 
 export interface PlanItemMove {
@@ -335,7 +316,15 @@ export interface PlanItemMove {
   note: string;
 }
 
-export type PlanItem = PlanItemAdd | PlanItemMove;
+export interface PlanItemCopyCma {
+  type: "copy-cma";
+  threadId: string;
+  slug: string;
+  address: string;
+  sourceUrl: string;
+}
+
+export type PlanItem = PlanItemAdd | PlanItemMove | PlanItemCopyCma;
 
 function bidNote(b: RemodelBidSignal): string {
   return (
@@ -350,15 +339,6 @@ function addendumNote(s: AddendumSignal): string {
     `Addendum signed${s.source === "docusign" ? " (e-sign completion)" : s.byWho ? ` per ${s.byWho}` : ""}` +
     `${s.date ? ` (${s.date.split(" ").slice(1, 4).join(" ")})` : ""}.`
   );
-}
-
-function closingNote(s: ClosingSignal): string {
-  const parts = [
-    `Closed${s.byWho ? ` per ${s.byWho}` : ""}${s.date ? ` (${s.date.split(" ").slice(1, 4).join(" ")})` : ""}`,
-  ];
-  if (s.lockboxLocation) parts.push(`Lockbox: ${s.lockboxLocation}`);
-  if (s.lockboxCombo) parts.push(`Combo: ${s.lockboxCombo}`);
-  return parts.join(". ") + ".";
 }
 
 function streetSlug(address: string): string {
@@ -402,9 +382,13 @@ export interface ScanResult {
 export async function scanForPipelineChanges(
   opts: { sinceDays?: number; mailbox?: MailboxKey } = {},
 ): Promise<ScanResult> {
-  const mailbox = opts.mailbox ?? "bradley";
+  const mailbox = opts.mailbox ?? "tih-contracts";
   const sinceDays = opts.sinceDays ?? 30;
-  const q = `from:contracts@tradeinholdings.com subject:"Inspection Report Ready" newer_than:${sinceDays}d`;
+  // Inspection emails arrive FROM Inspectify (or similar) into contracts@'s
+  // inbox — don't filter by sender. The thread API returns the full thread
+  // regardless of who started it, so message[0]'s body still has the
+  // inspection details we parse.
+  const q = `subject:"Inspection Report Ready" newer_than:${sinceDays}d`;
 
   const [threads, existing] = await Promise.all([
     listThreads(q, mailbox),
@@ -421,6 +405,9 @@ export async function scanForPipelineChanges(
     if (!existingProp) {
       const bid = await detectRemodelBidReply(parsed.threadId, mailbox);
       const toStage: StageId = bid.hasBid ? "exec-final-review" : "inspection-received";
+      const copyCma = parsed.cma_url
+        ? { sourceUrl: parsed.cma_url }
+        : undefined;
       plan.push({
         type: "add",
         threadId: parsed.threadId,
@@ -428,6 +415,7 @@ export async function scanForPipelineChanges(
         toStage,
         fields: fieldsForNewProperty(parsed, toStage),
         note: bid.hasBid ? bidNote(bid) : undefined,
+        copyCma,
       });
       continue;
     }
@@ -458,23 +446,66 @@ export async function scanForPipelineChanges(
           note: addendumNote(addendum),
         });
       }
-    } else if (existingProp.stage === "addendum-sent") {
-      const closing = await detectClosingConfirmed(parsed.threadId, mailbox);
-      if (closing.closed) {
-        plan.push({
-          type: "move",
-          threadId: parsed.threadId,
-          slug: existingProp.slug,
-          address: existingProp.address,
-          fromStage: existingProp.stage,
-          toStage: "contract-work",
-          note: closingNote(closing),
-        });
-      }
+    }
+    // addendum-sent → contract-work transition dropped: closing is Slack-only.
+
+    // CMA copy proposal for an existing property that has a cma_url but no
+    // CMA Sheet locally in its Docs folder. We can't easily tell from here
+    // whether the local copy exists, so we propose only when cma_url points
+    // at the source URL we just parsed (= the inspection-email body's URL)
+    // AND the property has no drive_folder_id yet (= never went through the
+    // copy step). Better than nothing for v1.
+    if (
+      existingProp &&
+      parsed.cma_url &&
+      existingProp.cma_url === parsed.cma_url &&
+      !existingProp.drive_folder_id &&
+      extractSheetIdFromUrl(parsed.cma_url)
+    ) {
+      plan.push({
+        type: "copy-cma",
+        threadId: parsed.threadId,
+        slug: existingProp.slug,
+        address: existingProp.address,
+        sourceUrl: parsed.cma_url,
+      });
     }
   }
 
-  return { plan, scannedThreads: threads.length, existingCount: existing.length };
+  // Dedup ADDs: multiple inspection emails can exist for the same property
+  // (re-inspections, forwards). Keep the entry whose stage is most advanced;
+  // ties broken by the more informative note.
+  const STAGE_ORDER: Record<string, number> = {
+    "inspection-received": 0,
+    "inspection-under-review": 1,
+    "exec-final-review": 2,
+    "addendum-sent": 3,
+    title: 4,
+    "contract-work": 5,
+    "ready-for-listing": 6,
+  };
+  const adds = plan.filter((p): p is PlanItemAdd => p.type === "add");
+  const other = plan.filter((p) => p.type !== "add");
+  const bestBySlug = new Map<string, PlanItemAdd>();
+  for (const a of adds) {
+    const prev = bestBySlug.get(a.fields.slug);
+    if (!prev) {
+      bestBySlug.set(a.fields.slug, a);
+      continue;
+    }
+    const prevRank = STAGE_ORDER[prev.toStage] ?? -1;
+    const curRank = STAGE_ORDER[a.toStage] ?? -1;
+    if (curRank > prevRank) bestBySlug.set(a.fields.slug, a);
+    else if (curRank === prevRank && a.note && !prev.note)
+      bestBySlug.set(a.fields.slug, a);
+  }
+  const dedupedPlan = [...bestBySlug.values(), ...other];
+
+  return {
+    plan: dedupedPlan,
+    scannedThreads: threads.length,
+    existingCount: existing.length,
+  };
 }
 
 export interface ApplyResult {
@@ -494,8 +525,26 @@ export async function applyPlan(plan: PlanItem[]): Promise<ApplyResult> {
             { body: item.note, checked: false, position: 0 },
           ]);
         }
+        if (item.copyCma) {
+          try {
+            await copyCmaToPropertyDocs({
+              slug: row.slug,
+              sourceUrl: item.copyCma.sourceUrl,
+            });
+          } catch (err) {
+            // CMA copy failure is non-fatal — the property is still added and
+            // its cma_url field is set to the source URL. Surface the warning
+            // in the apply result so the user can re-share + retry manually.
+            details.push({
+              ok: false,
+              item,
+              error: `Property added, but CMA copy failed: ${(err as Error).message}. Share the CMA Sheet with pm@tradeinholdings.com and retry.`,
+            });
+            continue;
+          }
+        }
         details.push({ ok: true, item });
-      } else {
+      } else if (item.type === "move") {
         await moveStage(item.slug, item.toStage);
         const sb = getSupabase();
         const { data: prop } = await sb
@@ -519,6 +568,12 @@ export async function applyPlan(plan: PlanItem[]): Promise<ApplyResult> {
             position: nextPos,
           });
         }
+        details.push({ ok: true, item });
+      } else if (item.type === "copy-cma") {
+        await copyCmaToPropertyDocs({
+          slug: item.slug,
+          sourceUrl: item.sourceUrl,
+        });
         details.push({ ok: true, item });
       }
     } catch (err) {
@@ -548,6 +603,3 @@ export async function runGmailSync(
     failed: result.failed,
   };
 }
-
-// Suppress unused-import warnings for re-exports consumers may want
-export { decodeBase64Url };
