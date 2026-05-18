@@ -152,6 +152,7 @@ export function SyncButton() {
 function itemKey(item: PlanItem): string {
   if (item.type === "add") return `add:${item.threadId}`;
   if (item.type === "move") return `move:${item.slug}:${item.toStage}`;
+  if (item.type === "set-thread-id") return `set-thread-id:${item.slug}`;
   return `copy-cma:${item.slug}`;
 }
 
@@ -202,6 +203,31 @@ function PlanItemRow({ item }: { item: PlanItem }) {
           className="mt-1 inline-block text-xs text-primary hover:underline"
         >
           source sheet ↗
+        </a>
+      </div>
+    );
+  }
+  if (item.type === "set-thread-id") {
+    return (
+      <div>
+        <div>
+          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950/60 dark:text-amber-200">
+            FIX URL
+          </span>{" "}
+          <span className="font-medium">{item.address}</span>
+        </div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          {item.oldUrl
+            ? "questionnaire URL points at a thread the sync mailbox can't see — re-point to the contracts@ thread"
+            : "no questionnaire URL set — populate from the contracts@ thread"}
+        </div>
+        <a
+          href={item.newUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-1 inline-block text-xs text-primary hover:underline"
+        >
+          open thread ↗
         </a>
       </div>
     );
