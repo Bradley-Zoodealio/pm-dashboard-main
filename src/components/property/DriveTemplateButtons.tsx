@@ -34,6 +34,7 @@ function folderUrl(folderId: string | null): string | null {
 
 export function DriveTemplateButtons({
   slug,
+  stage,
   comps_url,
   remodel_bid_url,
   project_tracker_url,
@@ -41,20 +42,32 @@ export function DriveTemplateButtons({
   renovation_folder_id,
 }: {
   slug: string;
+  stage: string;
   comps_url: string | null;
   remodel_bid_url: string | null;
   project_tracker_url: string | null;
   accounting_address_folder_id: string | null;
   renovation_folder_id: string | null;
 }) {
+  // Project Tracker + Renovation folder are only meaningful once the deal
+  // closes. Suppressing them pre-Contract Work keeps the page focused on
+  // pre-close artifacts (Comps, Bid, accounting docs) and stops accidental
+  // clicks from creating an empty Renovations/<address>/ folder tree.
+  const isContractWork = stage === "contract-work";
   const buttons: ButtonSpec[] = [
     { label: "Comps Sheet", action: createCompsAction, existingUrl: comps_url },
     { label: "Remodel Bid", action: createRemodelBidAction, existingUrl: remodel_bid_url },
-    { label: "Project Tracker", action: createProjectTrackerAction, existingUrl: project_tracker_url },
   ];
+  if (isContractWork) {
+    buttons.push({
+      label: "Project Tracker",
+      action: createProjectTrackerAction,
+      existingUrl: project_tracker_url,
+    });
+  }
 
   const accountingUrl = folderUrl(accounting_address_folder_id);
-  const renovationUrl = folderUrl(renovation_folder_id);
+  const renovationUrl = isContractWork ? folderUrl(renovation_folder_id) : null;
 
   return (
     <section className="rounded-lg border border-border bg-card p-4">

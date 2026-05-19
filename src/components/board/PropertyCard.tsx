@@ -28,6 +28,7 @@ export function PropertyCard({ property }: { property: PropertyRow }) {
         property.stage,
         property.inspect_date,
         property.renovation_completed_at,
+        property.addendum_sent_at,
       )
     ];
 

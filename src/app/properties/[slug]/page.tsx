@@ -27,6 +27,22 @@ function moneyInputValue(cents: number | null): string {
   return String(cents / 100);
 }
 
+// Renders an ISO timestamp from a timestamptz column as YYYY-MM-DD so the
+// <input type="date"> can round-trip it. Uses local-tz components — matches
+// how setAddendumSentAtAction interprets the date on the way in.
+function ymdFromIso(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return (
+    d.getFullYear() +
+    "-" +
+    String(d.getMonth() + 1).padStart(2, "0") +
+    "-" +
+    String(d.getDate()).padStart(2, "0")
+  );
+}
+
 export default async function PropertyPage({
   params,
 }: {
@@ -81,6 +97,7 @@ export default async function PropertyPage({
       />
       <DriveTemplateButtons
         slug={property.slug}
+        stage={property.stage}
         comps_url={property.comps_url}
         remodel_bid_url={property.remodel_bid_url}
         project_tracker_url={property.project_tracker_url}
@@ -90,7 +107,11 @@ export default async function PropertyPage({
       <PropertyDrafts propertyId={property.id} propertySlug={property.slug} />
       <PropertyLinks property={property} />
       <PropertyDocuments property={property} />
-      <PropertyActivity questionnaireUrl={property.questionnaire_url} />
+      <PropertyActivity
+        inspectionThreadId={property.inspection_thread_id}
+        addendumThreadId={property.addendum_thread_id}
+        stage={property.stage}
+      />
       <PropertyNotes slug={property.slug} notes={notes} />
       <PropertyLifecycle property={property} />
     </main>
@@ -146,6 +167,13 @@ function PropertyFields({ property }: { property: PropertyRow }) {
       field: "inspect_date",
       display: property.inspect_date ?? "",
       input: property.inspect_date ?? "",
+      type: "date",
+    },
+    {
+      label: "Addendum sent",
+      field: "addendum_sent_at",
+      display: ymdFromIso(property.addendum_sent_at),
+      input: ymdFromIso(property.addendum_sent_at),
       type: "date",
     },
     {

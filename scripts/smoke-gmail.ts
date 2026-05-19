@@ -31,9 +31,19 @@ async function main() {
     } else if (item.type === "copy-cma") {
       console.log(`  COPY-CMA  ${item.address}`);
       console.log(`            source: ${item.sourceUrl}`);
-    } else {
+    } else if (item.type === "set-thread-id") {
       console.log(`  FIX-URL   ${item.address}`);
-      console.log(`            ${item.oldUrl ?? "(unset)"} → ${item.newUrl}`);
+      console.log(
+        `            ${item.oldThreadId ?? "(unset)"} → ${item.newThreadId}`,
+      );
+    } else {
+      console.log(`  ADDENDUM  ${item.address}`);
+      console.log(`            sent: ${item.sentAtIso}`);
+      if (item.toStage)
+        console.log(
+          `            ${labelFor(item.fromStage)} → ${labelFor(item.toStage)}`,
+        );
+      else console.log(`            (backfill only — stage unchanged)`);
     }
     console.log(`        thread: https://mail.google.com/mail/u/0/#all/${item.threadId}\n`);
   }

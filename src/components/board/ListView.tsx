@@ -59,7 +59,15 @@ export function ListView({ properties }: { properties: PropertyRow[] }) {
                 <tbody className="divide-y divide-border">
                   {items.map((p) => {
                     const countdown = showCountdown(p.stage) ? daysUntil(p.inspect_date) : null;
-                    const tint = TINT_STYLES[tintForProperty(p.stage, p.inspect_date)];
+                    const tint =
+                      TINT_STYLES[
+                        tintForProperty(
+                          p.stage,
+                          p.inspect_date,
+                          p.renovation_completed_at,
+                          p.addendum_sent_at,
+                        )
+                      ];
                     return (
                       <tr key={p.id} className={`${tint.bg} hover:brightness-95`}>
                         <td className="relative px-3 py-2 pl-4">

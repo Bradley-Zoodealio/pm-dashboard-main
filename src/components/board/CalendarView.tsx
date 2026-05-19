@@ -2,20 +2,36 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { labelFor, showCountdown } from "@/lib/services/stages";
-import { TINT_STYLES, tintForProperty, type Tint } from "@/lib/services/property-tint";
+import {
+  TINT_STYLES,
+  tintForProperty,
+  tintForAddendumDeadline,
+  type Tint,
+} from "@/lib/services/property-tint";
 import type { PropertyRow } from "@/lib/db/properties";
 
+// One pin on one day. EOI entries are anchored to inspect_date; addendum
+// entries are anchored to the 5-day deadline (sent + 5 calendar days).
 interface CalendarEntry {
   id: string;
   slug: string;
   address: string;
   assignee: string;
-  stageLabel: string;
-  stageId: string;
-  inspect: string;
+  source: "eoi" | "addendum";
+  kind: "eoi" | "addendum-deadline";
+  // YMD key in local time.
+  dateKey: string;
+  // Shown on the deadline pin's second line so the PM can see when the
+  // 5-day clock started at a glance.
+  sentDateLabel?: string;
   tint: Tint;
+  // Stage label for the EOI pin's tooltip (unchanged from the prior view).
+  stageLabel?: string;
 }
+
+const ADDENDUM_WINDOW_DAYS = 5;
 
 function ymdKey(d: Date): string {
   return (
@@ -27,41 +43,138 @@ function ymdKey(d: Date): string {
   );
 }
 
-function buildEntries(properties: PropertyRow[]): CalendarEntry[] {
+function daysUntilLocal(targetIsoDay: string): number {
+  const target = new Date(targetIsoDay + "T00:00:00");
+  if (Number.isNaN(target.getTime())) return 0;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((target.getTime() - today.getTime()) / 86_400_000);
+}
+
+function ymdFromIso(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return ymdKey(d);
+}
+
+function shortMonthDay(ymd: string): string {
+  const d = new Date(ymd + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return ymd;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function addDaysYmd(ymd: string, days: number): string {
+  const d = new Date(ymd + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return ymd;
+  d.setDate(d.getDate() + days);
+  return ymdKey(d);
+}
+
+function buildEoiEntries(properties: PropertyRow[]): CalendarEntry[] {
   const out: CalendarEntry[] = [];
   for (const p of properties) {
     if (!showCountdown(p.stage)) continue;
     if (!p.inspect_date) continue;
     out.push({
-      id: p.id,
+      id: `eoi:${p.id}`,
       slug: p.slug,
       address: p.address,
       assignee: p.assignee ?? "Unassigned",
-      stageLabel: labelFor(p.stage),
-      stageId: p.stage,
-      inspect: p.inspect_date,
+      source: "eoi",
+      kind: "eoi",
+      dateKey: p.inspect_date,
       tint: tintForProperty(p.stage, p.inspect_date),
+      stageLabel: labelFor(p.stage),
     });
   }
   return out;
 }
 
+function buildAddendumEntries(properties: PropertyRow[]): CalendarEntry[] {
+  const out: CalendarEntry[] = [];
+  for (const p of properties) {
+    if (p.stage !== "addendum-sent") continue;
+    if (!p.addendum_sent_at) continue;
+    if (p.cancelled_at) continue;
+    const sentYmd = ymdFromIso(p.addendum_sent_at);
+    if (!sentYmd) continue;
+    const deadlineYmd = addDaysYmd(sentYmd, ADDENDUM_WINDOW_DAYS);
+    const daysOut = daysUntilLocal(deadlineYmd);
+    out.push({
+      id: `addendum-deadline:${p.id}`,
+      slug: p.slug,
+      address: p.address,
+      assignee: p.assignee ?? "Unassigned",
+      source: "addendum",
+      kind: "addendum-deadline",
+      dateKey: deadlineYmd,
+      sentDateLabel: shortMonthDay(sentYmd),
+      tint: tintForAddendumDeadline(daysOut),
+    });
+  }
+  return out;
+}
+
+type ShowSet = { eoi: boolean; addendum: boolean };
+
+// `?show=eoi,addendum` — both default to active when absent. An empty value
+// (`?show=`) renders nothing, which is intentional: users can mute both
+// streams without losing the URL contract.
+function parseShow(param: string | null): ShowSet {
+  if (param === null) return { eoi: true, addendum: true };
+  const parts = new Set(param.split(",").map((s) => s.trim()).filter(Boolean));
+  return { eoi: parts.has("eoi"), addendum: parts.has("addendum") };
+}
+
+function showToParam(show: ShowSet): string | null {
+  if (show.eoi && show.addendum) return null; // omit the param entirely
+  const parts: string[] = [];
+  if (show.eoi) parts.push("eoi");
+  if (show.addendum) parts.push("addendum");
+  return parts.join(",");
+}
+
 export function CalendarView({ properties }: { properties: PropertyRow[] }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const show = useMemo(
+    () => parseShow(searchParams.get("show")),
+    [searchParams],
+  );
+
+  function toggleShow(key: "eoi" | "addendum") {
+    const next: ShowSet = { ...show, [key]: !show[key] };
+    const params = new URLSearchParams(searchParams.toString());
+    const v = showToParam(next);
+    if (v === null) params.delete("show");
+    else params.set("show", v);
+    const qs = params.toString();
+    router.replace(qs ? `?${qs}` : "?", { scroll: false });
+  }
+
   const [anchor, setAnchor] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
 
-  const entries = useMemo(() => buildEntries(properties), [properties]);
+  const eoiEntries = useMemo(() => buildEoiEntries(properties), [properties]);
+  const addendumEntries = useMemo(
+    () => buildAddendumEntries(properties),
+    [properties],
+  );
+
   const byDate = useMemo(() => {
     const m = new Map<string, CalendarEntry[]>();
-    for (const e of entries) {
-      const list = m.get(e.inspect) ?? [];
+    const all: CalendarEntry[] = [];
+    if (show.eoi) all.push(...eoiEntries);
+    if (show.addendum) all.push(...addendumEntries);
+    for (const e of all) {
+      const list = m.get(e.dateKey) ?? [];
       list.push(e);
-      m.set(e.inspect, list);
+      m.set(e.dateKey, list);
     }
     return m;
-  }, [entries]);
+  }, [eoiEntries, addendumEntries, show]);
 
   const year = anchor.getFullYear();
   const month = anchor.getMonth();
@@ -117,11 +230,19 @@ export function CalendarView({ properties }: { properties: PropertyRow[] }) {
         >
           Today
         </button>
-        <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
-          <Legend label="Past due" cls={TINT_STYLES.passed.dot} />
-          <Legend label="≤1 day" cls={TINT_STYLES.urgent.dot} />
-          <Legend label="2–3 days" cls={TINT_STYLES.warning.dot} />
-          <Legend label="4+ days" cls={TINT_STYLES.healthy.dot} />
+        <div className="ml-auto flex items-center gap-2 text-xs">
+          <FilterPill
+            label="EOI"
+            active={show.eoi}
+            activeDotCls="bg-sky-500"
+            onClick={() => toggleShow("eoi")}
+          />
+          <FilterPill
+            label="Addendum"
+            active={show.addendum}
+            activeDotCls="bg-indigo-500"
+            onClick={() => toggleShow("addendum")}
+          />
         </div>
       </div>
 
@@ -156,21 +277,9 @@ export function CalendarView({ properties }: { properties: PropertyRow[] }) {
                 {c.date.getDate()}
               </div>
               <div className="flex flex-col gap-1">
-                {events.map((e) => {
-                  const style = TINT_STYLES[e.tint];
-                  return (
-                    <Link
-                      key={e.id}
-                      href={`/properties/${e.slug}`}
-                      title={`${e.address} — ${e.stageLabel} — ${e.assignee}`}
-                      className={`block rounded border-l-4 px-1.5 py-1 text-[11px] leading-tight transition-all hover:brightness-95 ${style.bg} ${style.label}`}
-                      style={{ borderLeftColor: "currentColor" }}
-                    >
-                      <div className="truncate font-medium text-foreground">{e.address}</div>
-                      <div className="truncate">{e.assignee}</div>
-                    </Link>
-                  );
-                })}
+                {events.map((e) => (
+                  <PinLink key={e.id} entry={e} />
+                ))}
               </div>
             </div>
           );
@@ -180,11 +289,63 @@ export function CalendarView({ properties }: { properties: PropertyRow[] }) {
   );
 }
 
-function Legend({ label, cls }: { label: string; cls: string }) {
+function PinLink({ entry }: { entry: CalendarEntry }) {
+  const style = TINT_STYLES[entry.tint];
+  if (entry.kind === "addendum-deadline") {
+    return (
+      <Link
+        href={`/properties/${entry.slug}`}
+        title={`Addendum deadline · ${entry.assignee} · sent ${entry.sentDateLabel}`}
+        className={`block rounded border-l-4 px-1.5 py-1 text-[11px] leading-tight transition-all hover:brightness-95 ${style.bg} ${style.label}`}
+        style={{ borderLeftColor: "currentColor" }}
+      >
+        <div className="truncate font-medium text-foreground">{entry.address}</div>
+        <div className="truncate">
+          {entry.assignee} · Sent {entry.sentDateLabel}
+        </div>
+      </Link>
+    );
+  }
+  // EOI
   return (
-    <span className="inline-flex items-center gap-1">
-      <span className={`inline-block h-2 w-2 rounded-sm ${cls}`} />
+    <Link
+      href={`/properties/${entry.slug}`}
+      title={`${entry.address} — ${entry.stageLabel ?? ""} — ${entry.assignee}`}
+      className={`block rounded border-l-4 px-1.5 py-1 text-[11px] leading-tight transition-all hover:brightness-95 ${style.bg} ${style.label}`}
+      style={{ borderLeftColor: "currentColor" }}
+    >
+      <div className="truncate font-medium text-foreground">{entry.address}</div>
+      <div className="truncate">{entry.assignee}</div>
+    </Link>
+  );
+}
+
+function FilterPill({
+  label,
+  active,
+  activeDotCls,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  activeDotCls: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-xs transition-colors ${
+        active
+          ? "border-border bg-card text-foreground"
+          : "border-border bg-background text-muted-foreground line-through decoration-muted-foreground/50"
+      }`}
+    >
+      <span
+        className={`inline-block h-2 w-2 rounded-sm ${active ? activeDotCls : "bg-muted-foreground/40"}`}
+      />
       {label}
-    </span>
+    </button>
   );
 }

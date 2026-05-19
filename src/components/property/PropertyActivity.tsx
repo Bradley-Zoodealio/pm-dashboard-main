@@ -68,18 +68,14 @@ function LinkifiedBody({ text }: { text: string }) {
   return <>{out}</>;
 }
 
-function extractThreadId(questionnaireUrl: string | null): string | null {
-  if (!questionnaireUrl) return null;
-  const m = questionnaireUrl.match(/#all\/([A-Za-z0-9]+)/);
-  return m ? m[1] : null;
-}
-
 const EVENT_LABELS: Record<ActivityEventType, string> = {
   "inspection-received": "Inspection received",
   "remodel-bid-sent": "Remodel bid sent",
   "addendum-signed": "Addendum signed",
   "closing-confirmed": "Closing confirmed",
   reply: "Reply",
+  "addendum-sent": "Addendum sent",
+  "agent-response": "Agent response",
 };
 
 const EVENT_BADGE_COLOR: Record<ActivityEventType, string> = {
@@ -88,28 +84,66 @@ const EVENT_BADGE_COLOR: Record<ActivityEventType, string> = {
   "addendum-signed": "bg-violet-100 text-violet-900 dark:bg-violet-950/60 dark:text-violet-200",
   "closing-confirmed": "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-200",
   reply: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+  "addendum-sent": "bg-indigo-100 text-indigo-900 dark:bg-indigo-950/60 dark:text-indigo-200",
+  "agent-response": "bg-fuchsia-100 text-fuchsia-900 dark:bg-fuchsia-950/60 dark:text-fuchsia-200",
 };
 
-export async function PropertyActivity({
-  questionnaireUrl,
-}: {
-  questionnaireUrl: string | null;
-}) {
-  const threadId = extractThreadId(questionnaireUrl);
-  if (!threadId) {
-    return (
-      <section className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">
-          Activity
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          No Gmail thread linked. Set the Questionnaire link to a mail.google.com URL to enable
-          activity history.
-        </p>
-      </section>
-    );
+// Returns the earliest agent message that has not yet been replied-to by
+// contracts@. Drives the "Awaiting response" callout. Returns null when
+// the latest message is from contracts@ (or the thread is empty).
+function earliestUnansweredAgentEvent(
+  events: ActivityEvent[],
+): ActivityEvent | null {
+  // Walk newest → oldest. The first contracts@ message we hit means
+  // everything older has been answered; anything between that contracts@
+  // reply and the newest message is the unanswered window.
+  let latestContractsIdx = -1;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].eventType === "addendum-sent") {
+      // The outbound starter counts as a contracts@ message.
+      latestContractsIdx = i;
+      break;
+    }
+    if (events[i].eventType === "reply") {
+      // A "reply" event in an addendum thread that isn't tagged
+      // agent-response was sent from contracts@.
+      latestContractsIdx = i;
+      break;
+    }
   }
+  if (latestContractsIdx === events.length - 1) return null;
+  // Find the first agent message after the latest contracts@ reply.
+  for (let i = latestContractsIdx + 1; i < events.length; i++) {
+    if (events[i].eventType === "agent-response") return events[i];
+  }
+  return null;
+}
 
+function relativeAge(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "";
+  const mins = Math.max(1, Math.round((Date.now() - t) / 60_000));
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 48) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return `${days}d ago`;
+}
+
+// Renders a single Gmail thread's activity. Re-used twice in the orchestrator
+// — once per linked thread (inspection + addendum). Keeps its own error
+// boundary semantics so a failure on one thread doesn't kill the other.
+async function ThreadActivity({
+  threadId,
+  title,
+  emptyMessage,
+  highlightUnanswered,
+}: {
+  threadId: string;
+  title: string;
+  emptyMessage: string;
+  highlightUnanswered?: boolean;
+}) {
   let events: ActivityEvent[] = [];
   let error: string | null = null;
   try {
@@ -118,15 +152,26 @@ export async function PropertyActivity({
     error = (err as Error).message;
   }
 
+  const unanswered =
+    highlightUnanswered && !error
+      ? earliestUnansweredAgentEvent(events)
+      : null;
+
   return (
     <section className="rounded-lg border border-border bg-card p-4">
       <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">
-        Activity
+        {title}
       </h2>
+      {unanswered && (
+        <div className="mb-3 rounded-md border border-fuchsia-300 bg-fuchsia-50 px-3 py-2 text-sm text-fuchsia-900 dark:border-fuchsia-800 dark:bg-fuchsia-950/40 dark:text-fuchsia-100">
+          ⏱ {unanswered.sender} replied {relativeAge(unanswered.iso)} —
+          awaiting reply.
+        </div>
+      )}
       {error ? (
         <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
       ) : events.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No messages in thread.</p>
+        <p className="text-sm text-muted-foreground">{emptyMessage}</p>
       ) : (
         <ol className="flex flex-col gap-3 text-sm">
           {events.map((e, i) => (
@@ -171,4 +216,63 @@ export async function PropertyActivity({
       )}
     </section>
   );
+}
+
+// Single guard for "thread tracker is meaningful" — used by the orchestrator
+// to decide whether to render a section or skip it.
+function hasThread(id: string | null): id is string {
+  return typeof id === "string" && id.length > 0;
+}
+
+export async function PropertyActivity({
+  inspectionThreadId,
+  addendumThreadId,
+  stage,
+}: {
+  inspectionThreadId: string | null;
+  addendumThreadId: string | null;
+  stage: string;
+}) {
+  if (!hasThread(inspectionThreadId) && !hasThread(addendumThreadId)) {
+    return (
+      <section className="rounded-lg border border-border bg-card p-4">
+        <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">
+          Activity
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          No Gmail thread linked. Run Gmail Sync to pick up the inspection
+          and/or addendum threads.
+        </p>
+      </section>
+    );
+  }
+
+  const addendumSection = hasThread(addendumThreadId) ? (
+    <ThreadActivity
+      key="addendum"
+      threadId={addendumThreadId}
+      title="Addendum Thread"
+      emptyMessage="No messages in addendum thread yet."
+      highlightUnanswered
+    />
+  ) : null;
+
+  const inspectionSection = hasThread(inspectionThreadId) ? (
+    <ThreadActivity
+      key="inspection"
+      threadId={inspectionThreadId}
+      title="Inspection Activity"
+      emptyMessage="No messages in thread."
+    />
+  ) : null;
+
+  // When the property is actively in addendum-sent, the addendum thread is
+  // what the PM is chasing — surface it above. Once moved on (Title or
+  // later), the inspection thread regains primacy as historical context.
+  const addendumFirst = stage === "addendum-sent";
+  const sections = addendumFirst
+    ? [addendumSection, inspectionSection]
+    : [inspectionSection, addendumSection];
+
+  return <div className="flex flex-col gap-3">{sections.filter(Boolean)}</div>;
 }
