@@ -4,7 +4,26 @@ import { showCountdown } from "./stages";
 // collide with the countdown scale. "complete" is a deeper, more saturated
 // green reserved for ready-for-listing — the renovation is done, the card is
 // fading off the board within 24h.
-export type Tint = "passed" | "urgent" | "warning" | "healthy" | "advanced" | "complete";
+//
+// The addendum-* tints are a parallel countdown for the 5-calendar-day window
+// that begins when an addendum email leaves contracts@. They live on calendar
+// pins only (never on board cards), and they ramp on a cool/jewel palette
+// (indigo → violet → fuchsia → pink) so they read as clearly distinct from
+// the EOI passed/urgent/warning/healthy scale even at the urgent end.
+// "addendum-sent" is a stationary zinc pin marking the send day; its color
+// does not shift.
+export type Tint =
+  | "passed"
+  | "urgent"
+  | "warning"
+  | "healthy"
+  | "advanced"
+  | "complete"
+  | "addendum-sent"
+  | "addendum-healthy"
+  | "addendum-warning"
+  | "addendum-urgent"
+  | "addendum-passed";
 
 export interface TintStyle {
   /** Background wash (~10% alpha so the surface stays readable). */
@@ -59,6 +78,36 @@ export const TINT_STYLES: Record<Tint, TintStyle> = {
     dot: "bg-emerald-700",
     label: "text-emerald-900 dark:text-emerald-100",
   },
+  "addendum-sent": {
+    bg: "bg-zinc-100 dark:bg-zinc-900/40",
+    beforeStripe: "before:bg-zinc-400",
+    dot: "bg-zinc-400",
+    label: "text-zinc-600 dark:text-zinc-400",
+  },
+  "addendum-healthy": {
+    bg: "bg-indigo-100 dark:bg-indigo-950/40",
+    beforeStripe: "before:bg-indigo-500",
+    dot: "bg-indigo-500",
+    label: "text-indigo-700 dark:text-indigo-300",
+  },
+  "addendum-warning": {
+    bg: "bg-violet-100 dark:bg-violet-950/40",
+    beforeStripe: "before:bg-violet-500",
+    dot: "bg-violet-500",
+    label: "text-violet-700 dark:text-violet-300",
+  },
+  "addendum-urgent": {
+    bg: "bg-fuchsia-100 dark:bg-fuchsia-950/40",
+    beforeStripe: "before:bg-fuchsia-500",
+    dot: "bg-fuchsia-500",
+    label: "text-fuchsia-700 dark:text-fuchsia-300",
+  },
+  "addendum-passed": {
+    bg: "bg-pink-100 dark:bg-pink-950/40",
+    beforeStripe: "before:bg-pink-600",
+    dot: "bg-pink-600",
+    label: "text-pink-700 dark:text-pink-300",
+  },
 };
 
 export function daysUntil(date: string | null): number | null {
@@ -79,14 +128,47 @@ export function formatInspectDate(date: string | null): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+// Deadline = addendum_sent_at + 5 calendar days. The pin color shifts on
+// the same urgency thresholds the EOI scale uses (≤1 / ≤3 / >3 days out)
+// — same shape, different palette.
+export function tintForAddendumDeadline(daysUntilDeadline: number): Tint {
+  if (daysUntilDeadline < 0) return "addendum-passed";
+  if (daysUntilDeadline <= 1) return "addendum-urgent";
+  if (daysUntilDeadline <= 3) return "addendum-warning";
+  return "addendum-healthy";
+}
+
 export function tintForProperty(
   stage: string,
   inspectDate: string | null,
   renovationCompletedAt: string | null = null,
+  addendumSentAt: string | null = null,
 ): Tint {
   // Renovation marked complete → distinct saturated emerald until the 24h
   // board filter hides the card. Stage is still contract-work.
   if (renovationCompletedAt) return "complete";
+  // Properties in Addendum Sent with a known send instant get their card
+  // tinted on the addendum 5-day urgency scale — same indigo→pink ramp
+  // used for the calendar deadline pin. Falls through to "advanced" when
+  // we don't yet know the send instant (manual move pending sync, etc.).
+  if (stage === "addendum-sent" && addendumSentAt) {
+    const sent = new Date(addendumSentAt);
+    if (!Number.isNaN(sent.getTime())) {
+      const deadline = new Date(sent);
+      deadline.setDate(deadline.getDate() + 5);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const deadlineDay = new Date(
+        deadline.getFullYear(),
+        deadline.getMonth(),
+        deadline.getDate(),
+      );
+      const daysOut = Math.round(
+        (deadlineDay.getTime() - today.getTime()) / 86_400_000,
+      );
+      return tintForAddendumDeadline(daysOut);
+    }
+  }
   // Past Exec Final Review → green, regardless of inspect date.
   if (!showCountdown(stage)) return "advanced";
   const daysOut = daysUntil(inspectDate);

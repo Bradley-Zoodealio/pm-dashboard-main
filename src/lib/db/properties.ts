@@ -19,6 +19,7 @@ export interface PropertyRow {
   cma_url: string | null;
   comps_url: string | null;
   questionnaire_url: string | null;
+  inspection_thread_id: string | null;
   remodel_bid_url: string | null;
   project_tracker_url: string | null;
   arv_cents: number | null;
@@ -37,6 +38,8 @@ export interface PropertyRow {
   renovation_folder_id: string | null;
   renovation_complete_note: string | null;
   renovation_completed_at: string | null;
+  addendum_sent_at: string | null;
+  addendum_thread_id: string | null;
   stage_changed_at: string;
   cancelled_at: string | null;
   cancelled_reason: string | null;
@@ -134,6 +137,7 @@ export interface PropertyInsert {
   cma_url?: string | null;
   comps_url?: string | null;
   questionnaire_url?: string | null;
+  inspection_thread_id?: string | null;
   remodel_bid_url?: string | null;
   project_tracker_url?: string | null;
   arv_cents?: number | null;

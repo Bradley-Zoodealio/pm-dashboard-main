@@ -115,7 +115,7 @@ The "Remodel Bid email" can be drafted via chat: tell Claude "draft the Remodel 
 
 The dashboard is a Next.js 14 App Router app at `/Users/bradleymeyer/Desktop/cowork/PPMDashboard`. Some session-saving notes:
 
-- **Dev server runs on port 3001** — `PORT=3001 npm run dev`. Most curl tests use `http://localhost:3001/`.
+- **Dev server runs on port 3000** — `npm run dev`. Most curl tests use `http://localhost:3000/`.
 - **Google OAuth** — Drive + Gmail scopes already authorized. Refresh token persisted to `.google-token.json` (gitignored). `.env.local` has `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, plus three template file IDs (`DRIVE_TEMPLATE_FILE_ID` for comps, `DRIVE_REMODEL_BID_TEMPLATE_FILE_ID`, `DRIVE_PROJECT_TRACKER_TEMPLATE_FILE_ID`).
 - **PDF inspection reports** — drop in `Inspection Reports/` (gitignored). Read with `python3 -c "import pypdf; r = pypdf.PdfReader(path); ..."`. `pypdf` is already installed.
 - **TASKS.md** — single-file source of truth. Each property is a single line with `key: value | key: value | ...` fields. The `slug` is implicit from `slugify(address)`.

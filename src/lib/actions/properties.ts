@@ -28,6 +28,7 @@ const EDITABLE_FIELDS = [
   "revised_repaired_clr_cents",
   "revised_repaired_reserve_pct",
   "inspect_date",
+  "addendum_sent_at",
   "assignee",
   "exec_reviewer",
   "inspect_url",
@@ -96,6 +97,12 @@ function parseValueFor(field: EditableField, raw: string): unknown {
     if (!m) throw new Error("inspect_date must be YYYY-MM-DD");
     return trimmed;
   }
+  if (field === "addendum_sent_at") {
+    if (trimmed === "") return null;
+    const m = trimmed.match(/^\d{4}-\d{2}-\d{2}$/);
+    if (!m) throw new Error("addendum_sent_at must be YYYY-MM-DD");
+    return new Date(`${trimmed}T00:00:00`).toISOString();
+  }
   return trimmed === "" ? null : trimmed;
 }
 
@@ -143,12 +150,72 @@ export async function saveRevisedScenarioAction(
   revalidatePath(`/properties/${checkedSlug}`);
 }
 
+// Ordering of pipeline stages for "moving backward" detection. Terminal
+// stages (cancelled, closed) are intentionally not ranked — moving into
+// them is neither forward nor backward, and we preserve addendum fields
+// for the historical record. Kept in sync with STAGE_ORDER in
+// [@/lib/services/gmail-sync].
+const STAGE_RANK: Record<string, number> = {
+  "inspection-received": 0,
+  "inspection-under-review": 1,
+  "exec-final-review": 2,
+  "addendum-sent": 3,
+  title: 4,
+  "contract-work": 5,
+};
+
 export async function moveStageAction(slug: string, stage: string): Promise<void> {
   const checkedSlug = slugSchema.parse(slug);
   if (!isStageId(stage)) {
     throw new Error(`Unknown stage: ${stage}`);
   }
-  await moveStageRepo(checkedSlug, stage as StageId);
+  const target = stage as StageId;
+
+  // Need the prior stage to know if we're leaving addendum-sent backward.
+  // We can't reuse stage_changed_at for addendum_sent_at (Gmail backfill
+  // may discover a send that pre-dated the drag), so the addendum fields
+  // are independent — and this action is the only place that clears them
+  // on a backward move.
+  const sb = getSupabase();
+  const { data: current, error: curErr } = await sb
+    .from("properties")
+    .select("stage")
+    .eq("slug", checkedSlug)
+    .maybeSingle();
+  if (curErr) throw curErr;
+
+  await moveStageRepo(checkedSlug, target);
+
+  const wasAddendumSent = current?.stage === "addendum-sent";
+  const targetRank = STAGE_RANK[target];
+  if (
+    wasAddendumSent &&
+    targetRank !== undefined &&
+    targetRank < STAGE_RANK["addendum-sent"]
+  ) {
+    await updatePropertyField(checkedSlug, "addendum_sent_at", null);
+    await updatePropertyField(checkedSlug, "addendum_thread_id", null);
+  }
+
+  revalidatePath("/");
+  revalidatePath(`/properties/${checkedSlug}`);
+}
+
+// Manual entry of the addendum send date (the modal that fires on
+// drag-to-Addendum-Sent when addendum_sent_at is still null). The date
+// arrives as YYYY-MM-DD from the picker; stored as the start of that
+// day in the server's local time, then promoted to ISO. Gmail-sync will
+// overwrite with the real internalDate on next run.
+const addendumDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+export async function setAddendumSentAtAction(
+  slug: string,
+  yyyyMmDd: string,
+): Promise<void> {
+  const checkedSlug = slugSchema.parse(slug);
+  const checkedDate = addendumDateSchema.parse(yyyyMmDd);
+  const iso = new Date(`${checkedDate}T00:00:00`).toISOString();
+  await updatePropertyField(checkedSlug, "addendum_sent_at", iso);
   revalidatePath("/");
   revalidatePath(`/properties/${checkedSlug}`);
 }

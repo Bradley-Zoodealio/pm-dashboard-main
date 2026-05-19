@@ -21,9 +21,13 @@ import {
 
 import { PropertyCard } from "./PropertyCard";
 import { Board } from "./Board";
+import { AddendumDateModal } from "./AddendumDateModal";
 import { STAGES, type StageId, isStageId } from "@/lib/services/stages";
 import type { PropertyRow } from "@/lib/db/properties";
-import { moveStageAction } from "@/lib/actions/properties";
+import {
+  moveStageAction,
+  setAddendumSentAtAction,
+} from "@/lib/actions/properties";
 
 type Patch = { id: string; stage: StageId };
 
@@ -40,6 +44,15 @@ export function BoardDnd({ properties }: { properties: PropertyRow[] }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   const [activeId, setActiveId] = useState<string | null>(null);
+
+  // Drop intercepted because the property is moving into addendum-sent
+  // for the first time and we need the user to confirm the send date
+  // before committing the move. Cleared on confirm or cancel; while it's
+  // set, NO optimistic patch has been applied — so cancelling leaves the
+  // card visually in its original column.
+  const [pendingAddendumDrop, setPendingAddendumDrop] = useState<{
+    property: PropertyRow;
+  } | null>(null);
 
   // Per-stage collapse state, persisted to localStorage so each user's
   // preferred view survives reloads.
@@ -105,9 +118,34 @@ export function BoardDnd({ properties }: { properties: PropertyRow[] }) {
     if (!property) return;
     if (property.stage === targetStage) return;
 
+    // First-time entry into addendum-sent needs a send date. Intercept the
+    // drop — do NOT apply the optimistic patch — and open the modal. The
+    // modal's confirm handler is what commits both the timestamp and the
+    // stage move. Cancel leaves everything untouched.
+    if (
+      targetStage === "addendum-sent" &&
+      property.addendum_sent_at == null
+    ) {
+      setPendingAddendumDrop({ property });
+      return;
+    }
+
     startTransition(() => {
       applyPatch({ id: property.id, stage: targetStage });
       void moveStageAction(property.slug, targetStage);
+    });
+  }
+
+  function confirmAddendumDrop(yyyyMmDd: string) {
+    const pending = pendingAddendumDrop;
+    if (!pending) return;
+    setPendingAddendumDrop(null);
+    startTransition(() => {
+      applyPatch({ id: pending.property.id, stage: "addendum-sent" });
+      void (async () => {
+        await setAddendumSentAtAction(pending.property.slug, yyyyMmDd);
+        await moveStageAction(pending.property.slug, "addendum-sent");
+      })();
     });
   }
 
@@ -141,6 +179,14 @@ export function BoardDnd({ properties }: { properties: PropertyRow[] }) {
           </div>
         ) : null}
       </DragOverlay>
+
+      {pendingAddendumDrop && (
+        <AddendumDateModal
+          address={pendingAddendumDrop.property.address}
+          onConfirm={confirmAddendumDrop}
+          onCancel={() => setPendingAddendumDrop(null)}
+        />
+      )}
     </DndContext>
   );
 }

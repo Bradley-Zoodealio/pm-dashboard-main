@@ -36,25 +36,68 @@ export async function PropertyDocuments({ property }: { property: PropertyRow })
     error = (err as Error).message;
   }
 
-  // Filter out already-linked files from each group; drop empty groups whose
-  // folder doesn't even exist yet (folderUrl === null AND files === []).
+  // Renovation/* groups belong to a Contract Work property — pre-close
+  // they're empty noise that clutters the page (and historically led to
+  // accidental Project Tracker creations populating the Renovations tree
+  // for properties still in Exec Final Review). Hide them outside that
+  // stage; once the property moves to Contract Work they reappear.
+  const isContractWork = property.stage === "contract-work";
   const visibleGroups = groups
+    .filter((g) => isContractWork || !g.group.startsWith("Renovation"))
     .map((g) => ({ ...g, files: g.files.filter((f) => !linkedIds.has(f.id)) }))
     .filter((g) => g.folderUrl !== null || g.files.length > 0);
 
   const totalFiles = visibleGroups.reduce((n, g) => n + g.files.length, 0);
+
+  // Direct links to the canonical Drive folders for this property. The
+  // accounting folder is useful at every stage (the deal team's docs live
+  // there); the PM-side renovation folder is only meaningful once
+  // contract work begins.
+  const accountingFolderUrl = property.accounting_address_folder_id
+    ? `https://drive.google.com/drive/folders/${property.accounting_address_folder_id}`
+    : null;
+  const pmFolderUrl =
+    isContractWork && property.renovation_folder_id
+      ? `https://drive.google.com/drive/folders/${property.renovation_folder_id}`
+      : null;
+  const hasFolderPills = !!(accountingFolderUrl || pmFolderUrl);
 
   return (
     <section className="rounded-lg border border-border bg-card p-4">
       <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted-foreground">
         Documents
       </h2>
+      {hasFolderPills && (
+        <div className="mb-3 flex flex-wrap gap-2">
+          {accountingFolderUrl && (
+            <a
+              href={accountingFolderUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-md border border-input bg-card px-3 py-1.5 text-sm font-medium hover:bg-accent"
+            >
+              Accounting Drive ↗
+            </a>
+          )}
+          {pmFolderUrl && (
+            <a
+              href={pmFolderUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-md border border-input bg-card px-3 py-1.5 text-sm font-medium hover:bg-accent"
+            >
+              PM Drive ↗
+            </a>
+          )}
+        </div>
+      )}
       {error ? (
         <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
       ) : totalFiles === 0 && visibleGroups.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No Drive folders linked yet. Create a Comps Sheet, Remodel Bid, or
-          Project Tracker above to start populating this section.
+          {hasFolderPills
+            ? "No files indexed for this property yet — use the folder links above to browse the Drive contents directly."
+            : "No Drive folders linked yet. Create a Comps Sheet, Remodel Bid, or Project Tracker above to start populating this section."}
         </p>
       ) : (
         <div className="flex flex-col gap-4">

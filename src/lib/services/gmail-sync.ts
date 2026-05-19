@@ -36,6 +36,10 @@ import type { StageId } from "@/lib/services/stages";
 // contain closing emails still get labeled correctly.
 
 const SUBJECT_PATTERN = /Inspection Report Ready for Viewing\s*-\s*(.+?)$/i;
+// New outbound thread from contracts@ when the addendum goes to the listing
+// agent — see the working email format at memory/feedback_offer_types.md.
+// Address suffix is the linking key into properties.
+const ADDENDUM_SUBJECT_PATTERN = /Inspection Addendum Response\s*-\s*(.+?)$/i;
 const TEAM_DOMAIN = "@zoodealio.com";
 const MARKET_STATS_RE =
   /CURRENTLY ACTIVE HOMES?[:\s]+(\d+)[\s\S]{0,200}?SOLD IN THE LAST MONTH[:\s]+(\d+)[\s\S]{0,200}?PENDING HOMES?[:\s]+(\d+)[\s\S]{0,200}?([\d.]+\s*months? of inventory)/i;
@@ -107,19 +111,6 @@ function redfinUrl(address: string): string {
     "https://www.google.com/search?q=site:redfin.com+" +
     encodeURIComponent(address).replace(/%20/g, "+")
   );
-}
-
-function questionnaireUrl(threadId: string): string {
-  return `https://mail.google.com/mail/u/0/#all/${threadId}`;
-}
-
-// Extracts a Gmail thread id from a mail.google.com URL. Mirrors the regex
-// used by PropertyActivity so backfilled URLs stay in sync with what the
-// Activity component can resolve.
-function extractThreadIdFromUrl(url: string | null): string | null {
-  if (!url) return null;
-  const m = url.match(/#all\/([A-Za-z0-9]+)/);
-  return m ? m[1] : null;
 }
 
 // ── Detection functions ──────────────────────────────────────────────────────
@@ -237,6 +228,37 @@ async function detectAddendumSigned(
   return { signed: false };
 }
 
+export interface ParsedAddendum {
+  threadId: string;
+  address: string;
+  // Absolute instant the addendum email left contracts@'s Sent folder.
+  // Sourced from Gmail's internalDate (millisecond epoch) — NOT the Date:
+  // header, which is user-set and can drift.
+  sentAtIso: string;
+}
+
+async function parseAddendumThread(
+  threadId: string,
+  mailbox: MailboxKey,
+): Promise<ParsedAddendum | null> {
+  const data = await getThread(threadId, mailbox);
+  const firstMsg = data.messages?.[0];
+  if (!firstMsg) return null;
+
+  const subject = header(firstMsg.payload?.headers ?? undefined, "subject");
+  const m = subject.match(ADDENDUM_SUBJECT_PATTERN);
+  const address = m ? m[1].replace(/^Fwd:\s*/i, "").trim() : "";
+  if (!address) return null;
+
+  const internalDate = firstMsg.internalDate;
+  const dateHeader = header(firstMsg.payload?.headers ?? undefined, "date");
+  const sentAtIso = internalDate
+    ? new Date(Number(internalDate)).toISOString()
+    : new Date(dateHeader).toISOString();
+
+  return { threadId, address, sentAtIso };
+}
+
 // ── Activity timeline ────────────────────────────────────────────────────────
 //
 // Closing-confirmed branch left intact for *display* of historical threads
@@ -247,7 +269,14 @@ export type ActivityEventType =
   | "remodel-bid-sent"
   | "addendum-signed"
   | "closing-confirmed"
-  | "reply";
+  | "reply"
+  // First message in the outbound Addendum Response thread — classifier
+  // tags the first message this way iff the thread's subject matches
+  // ADDENDUM_SUBJECT_PATTERN.
+  | "addendum-sent"
+  // Inbound reply from the listing agent on the addendum thread — drives
+  // the "Awaiting response" callout on the property page.
+  | "agent-response";
 
 export interface ActivityEvent {
   date: string;
@@ -305,6 +334,14 @@ export async function getThreadActivity(
   const messages = data.messages ?? [];
   const events: ActivityEvent[] = [];
 
+  // Classifier mode keys off the first message's subject — addendum threads
+  // get their own first-message label and an "agent-response" tag for any
+  // non-contracts@ reply; inspection threads keep the original cascade.
+  const firstSubject = messages[0]
+    ? header(messages[0].payload?.headers ?? undefined, "subject")
+    : "";
+  const isAddendumThread = ADDENDUM_SUBJECT_PATTERN.test(firstSubject);
+
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     const from = header(msg.payload?.headers ?? undefined, "from");
@@ -313,7 +350,13 @@ export async function getThreadActivity(
     const body = extractPlaintextBody(msg);
 
     let eventType: ActivityEventType = "reply";
-    if (i === 0) {
+    if (isAddendumThread) {
+      if (i === 0) {
+        eventType = "addendum-sent";
+      } else if (!from.includes("contracts@tradeinholdings.com")) {
+        eventType = "agent-response";
+      }
+    } else if (i === 0) {
       eventType = "inspection-received";
     } else if (MARKET_STATS_RE.test(body) && from.includes(TEAM_DOMAIN)) {
       eventType = "remodel-bid-sent";
@@ -375,24 +418,42 @@ export interface PlanItemCopyCma {
   sourceUrl: string;
 }
 
-// Backfills questionnaire_url with the contracts@ thread id when the existing
-// value is missing or refers to a thread id from a different mailbox (e.g.
-// pasted from a personal account). Without this, Activity would 404 because
-// Gmail thread ids are per-mailbox.
+// Backfills inspection_thread_id with the contracts@ thread id when the
+// existing value is missing or stale (e.g. pointed at a different mailbox).
+// Without this, the inspection-thread Activity would 404 because Gmail
+// thread ids are per-mailbox.
 export interface PlanItemSetThreadId {
   type: "set-thread-id";
   threadId: string;
   slug: string;
   address: string;
-  oldUrl: string | null;
-  newUrl: string;
+  // Surfaced in the diff modal so the user can see what's changing. Mostly
+  // null in practice now that inspection_thread_id is the source of truth.
+  oldThreadId: string | null;
+  newThreadId: string;
+}
+
+// Detected outbound "Inspection Addendum Response - <address>" from
+// contracts@'s Sent folder. Always carries the real send instant + thread
+// id (these win over any manual entry). toStage is non-null only when the
+// property is currently ≤ exec-final-review — at title/contract-work we
+// just backfill so the property-page tracker can show the thread.
+export interface PlanItemAddendumDetected {
+  type: "addendum-detected";
+  threadId: string;
+  slug: string;
+  address: string;
+  sentAtIso: string;
+  fromStage: string;
+  toStage: StageId | null;
 }
 
 export type PlanItem =
   | PlanItemAdd
   | PlanItemMove
   | PlanItemCopyCma
-  | PlanItemSetThreadId;
+  | PlanItemSetThreadId
+  | PlanItemAddendumDetected;
 
 function bidNote(b: RemodelBidSignal): string {
   return (
@@ -409,17 +470,111 @@ function addendumNote(s: AddendumSignal): string {
   );
 }
 
-function streetSlug(address: string): string {
-  return slugify(address.split(",")[0]);
+// Single-token directional prefixes that contracts@-typed subjects sometimes
+// omit ("Silver Cir" vs TASKS' "S Silver Cir"). Dropped only in the
+// permissive slug candidate — the strict candidate preserves them.
+const DIRECTIONAL_TOKENS = new Set([
+  "n",
+  "s",
+  "e",
+  "w",
+  "ne",
+  "nw",
+  "se",
+  "sw",
+  "north",
+  "south",
+  "east",
+  "west",
+]);
+
+// Used to truncate a raw address at its street suffix when no comma is
+// present (addendum-response subjects are typed manually by Contracts and
+// often drop the comma between the street and the city). Inspection
+// subjects always have the comma so the strict split still works there.
+const STREET_SUFFIX_RE =
+  /\b(?:cir|circle|st|street|dr|drive|rd|road|ave|avenue|blvd|boulevard|ln|lane|way|ct|court|cv|cove|pl|place|trl|trail|pkwy|parkway|hwy|highway|ter|terrace)\b/i;
+
+function leadingStreet(rawAddress: string): string {
+  if (rawAddress.includes(",")) return rawAddress.split(",")[0];
+  const m = rawAddress.match(STREET_SUFFIX_RE);
+  if (m && m.index !== undefined) {
+    return rawAddress.slice(0, m.index + m[0].length);
+  }
+  return rawAddress;
 }
 
-function matchesExisting(newStreetSlug: string, existing: PropertyRow): boolean {
-  const s = streetSlug(existing.address);
-  return (
-    s === newStreetSlug ||
-    s.startsWith(newStreetSlug + "-") ||
-    newStreetSlug.startsWith(s + "-")
-  );
+// Long-form → short-form suffix canonicalization. Contracts@-typed
+// addendum subjects sometimes spell the suffix out ("Brian Court") while
+// TASKS.md tends to use abbreviations ("Brian Ct"). Both sides emit a
+// candidate slug with the short form so they can meet in the middle.
+const SUFFIX_CANONICAL: Record<string, string> = {
+  circle: "cir",
+  street: "st",
+  drive: "dr",
+  road: "rd",
+  avenue: "ave",
+  boulevard: "blvd",
+  lane: "ln",
+  court: "ct",
+  cove: "cv",
+  place: "pl",
+  trail: "trl",
+  parkway: "pkwy",
+  highway: "hwy",
+  terrace: "ter",
+};
+
+// Returns up to three slug variants for the matcher to compare against —
+// the strict slug (back-compat with inspection-thread matching), a
+// permissive variant with single-letter directional tokens dropped, and
+// a suffix-canonicalized variant (Court→Ct, Drive→Dr, etc.) that lets
+// "129 Brian Court" match "129 Brian Ct".
+function streetSlugVariants(rawAddress: string): string[] {
+  const leading = leadingStreet(rawAddress);
+  const out = new Set<string>();
+  const strict = slugify(leading);
+  if (strict) out.add(strict);
+
+  const tokens = leading
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const noDirectional = tokens.filter((t) => !DIRECTIONAL_TOKENS.has(t));
+  if (noDirectional.length > 0 && noDirectional.length !== tokens.length) {
+    out.add(noDirectional.join("-"));
+  }
+
+  const canonical = noDirectional.map((t) => SUFFIX_CANONICAL[t] ?? t);
+  if (canonical.length > 0) {
+    const joined = canonical.join("-");
+    out.add(joined);
+  }
+  return [...out].filter(Boolean);
+}
+
+const STAGE_ORDER: Record<string, number> = {
+  "inspection-received": 0,
+  "inspection-under-review": 1,
+  "exec-final-review": 2,
+  "addendum-sent": 3,
+  title: 4,
+  "contract-work": 5,
+};
+
+function matchesExisting(parsedAddress: string, existing: PropertyRow): boolean {
+  const a = streetSlugVariants(parsedAddress);
+  const b = streetSlugVariants(existing.address);
+  for (const x of a) {
+    for (const y of b) {
+      if (x === y) return true;
+      if (x.startsWith(y + "-")) return true;
+      if (y.startsWith(x + "-")) return true;
+    }
+  }
+  return false;
 }
 
 function fieldsForNewProperty(p: ParsedInspection, toStage: StageId): PropertyInsert {
@@ -435,7 +590,7 @@ function fieldsForNewProperty(p: ParsedInspection, toStage: StageId): PropertyIn
     inspect_url: p.inspect_url,
     redfin_url: redfinUrl(p.address),
     cma_url: p.cma_url,
-    questionnaire_url: questionnaireUrl(p.threadId),
+    inspection_thread_id: p.threadId,
   };
 }
 
@@ -471,8 +626,7 @@ export async function scanForPipelineChanges(
   for (const t of threads) {
     const parsed = await parseInspectionThread(t.threadId, mailbox);
     if (!parsed) continue;
-    const sSlug = streetSlug(parsed.address);
-    const existingProp = existing.find((p) => matchesExisting(sSlug, p));
+    const existingProp = existing.find((p) => matchesExisting(parsed.address, p));
 
     if (!existingProp) {
       const bid = await detectRemodelBidReply(parsed.threadId, mailbox);
@@ -492,7 +646,7 @@ export async function scanForPipelineChanges(
       continue;
     }
 
-    const existingThreadId = extractThreadIdFromUrl(existingProp.questionnaire_url);
+    const existingThreadId = existingProp.inspection_thread_id;
     if (
       existingThreadId !== parsed.threadId &&
       !setThreadIdSlugs.has(existingProp.slug)
@@ -502,8 +656,8 @@ export async function scanForPipelineChanges(
         threadId: parsed.threadId,
         slug: existingProp.slug,
         address: existingProp.address,
-        oldUrl: existingProp.questionnaire_url,
-        newUrl: questionnaireUrl(parsed.threadId),
+        oldThreadId: existingThreadId,
+        newThreadId: parsed.threadId,
       });
       setThreadIdSlugs.add(existingProp.slug);
     }
@@ -560,17 +714,46 @@ export async function scanForPipelineChanges(
     }
   }
 
+  // Second pass: outbound addendum-response threads in contracts@'s Sent
+  // folder. These never create properties — they only enrich existing ones
+  // with their addendum_sent_at and addendum_thread_id, and optionally
+  // promote stage when the property hasn't reached addendum-sent yet.
+  const addendumQ = `subject:"Inspection Addendum Response" in:sent newer_than:${sinceDays}d`;
+  const addendumThreads = await listThreads(addendumQ, mailbox);
+  const addendumSlugsSeen = new Set<string>();
+  for (const t of addendumThreads) {
+    const parsed = await parseAddendumThread(t.threadId, mailbox);
+    if (!parsed) continue;
+    const existingProp = existing.find((p) => matchesExisting(parsed.address, p));
+    if (!existingProp) continue;
+    // listThreads is newest-first; prefer the most recent send if multiple
+    // addendum threads exist for the same property.
+    if (addendumSlugsSeen.has(existingProp.slug)) continue;
+    addendumSlugsSeen.add(existingProp.slug);
+
+    const sameTimestamp = existingProp.addendum_sent_at === parsed.sentAtIso;
+    const sameThread = existingProp.addendum_thread_id === parsed.threadId;
+    if (sameTimestamp && sameThread) continue;
+
+    const currentRank = STAGE_ORDER[existingProp.stage] ?? -1;
+    const addendumRank = STAGE_ORDER["addendum-sent"];
+    const toStage: StageId | null =
+      currentRank >= 0 && currentRank < addendumRank ? "addendum-sent" : null;
+
+    plan.push({
+      type: "addendum-detected",
+      threadId: parsed.threadId,
+      slug: existingProp.slug,
+      address: existingProp.address,
+      sentAtIso: parsed.sentAtIso,
+      fromStage: existingProp.stage,
+      toStage,
+    });
+  }
+
   // Dedup ADDs: multiple inspection emails can exist for the same property
   // (re-inspections, forwards). Keep the entry whose stage is most advanced;
   // ties broken by the more informative note.
-  const STAGE_ORDER: Record<string, number> = {
-    "inspection-received": 0,
-    "inspection-under-review": 1,
-    "exec-final-review": 2,
-    "addendum-sent": 3,
-    title: 4,
-    "contract-work": 5,
-  };
   const adds = plan.filter((p): p is PlanItemAdd => p.type === "add");
   const other = plan.filter((p) => p.type !== "add");
   const bestBySlug = new Map<string, PlanItemAdd>();
@@ -663,7 +846,18 @@ export async function applyPlan(plan: PlanItem[]): Promise<ApplyResult> {
         });
         details.push({ ok: true, item });
       } else if (item.type === "set-thread-id") {
-        await updatePropertyField(item.slug, "questionnaire_url", item.newUrl);
+        await updatePropertyField(
+          item.slug,
+          "inspection_thread_id",
+          item.newThreadId,
+        );
+        details.push({ ok: true, item });
+      } else if (item.type === "addendum-detected") {
+        await updatePropertyField(item.slug, "addendum_sent_at", item.sentAtIso);
+        await updatePropertyField(item.slug, "addendum_thread_id", item.threadId);
+        if (item.toStage) {
+          await moveStage(item.slug, item.toStage);
+        }
         details.push({ ok: true, item });
       }
     } catch (err) {
