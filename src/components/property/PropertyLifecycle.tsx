@@ -1,7 +1,9 @@
 import {
   cancelPropertyAction,
   closePropertyAction,
+  markRenovationCompleteAction,
   restoreFromTerminalAction,
+  undoRenovationCompleteAction,
 } from "@/lib/actions/property-lifecycle";
 import { STAGES, isTerminalStage } from "@/lib/services/stages";
 import type { PropertyRow } from "@/lib/db/properties";
@@ -15,53 +17,119 @@ export function PropertyLifecycle({ property }: { property: PropertyRow }) {
   if (isTerminalStage(property.stage)) {
     return <TerminalRestoreSection property={property} />;
   }
-  return <ActiveDestructiveSection property={property} />;
+  return <ActiveLifecycleSection property={property} />;
 }
 
-function ActiveDestructiveSection({ property }: { property: PropertyRow }) {
-  const showCloseButton = property.stage === "ready-for-listing";
+function ActiveLifecycleSection({ property }: { property: PropertyRow }) {
+  const inContractWork = property.stage === "contract-work";
+  const isComplete = !!property.renovation_completed_at;
   const closeAction = closePropertyAction.bind(null, property.slug);
 
   return (
-    <section className="rounded-lg border border-rose-500/30 bg-rose-50/30 p-4 dark:bg-rose-950/10">
-      <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-rose-700 dark:text-rose-400">
-        Lifecycle
-      </h2>
-
-      {showCloseButton ? (
-        <form action={closeAction} className="mb-4 flex items-center gap-3">
-          <button
-            type="submit"
-            className="rounded-md border border-emerald-500/40 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:hover:bg-emerald-950/50"
-          >
-            Mark Closed
-          </button>
-          <span className="text-xs text-muted-foreground">
-            Moves the Drive folder to <code>Properties/Closed/</code>. Auto-cron
-            does this after 2 days in Ready for Listing.
-          </span>
-        </form>
+    <>
+      {inContractWork && !isComplete ? (
+        <RenovationCompleteForm slug={property.slug} />
       ) : null}
 
-      <form action={cancelPropertyAction} className="space-y-2">
-        <input type="hidden" name="slug" value={property.slug} />
-        <label className="block text-xs text-muted-foreground" htmlFor="reason">
-          Cancel this property — what happened? (required, min 5 chars)
+      {isComplete ? (
+        <section className="rounded-lg border border-emerald-500/30 bg-emerald-50/40 p-4 dark:bg-emerald-950/15">
+          <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+            Renovation Complete
+          </h2>
+          <div className="mb-3 text-xs text-muted-foreground">
+            Marked complete {formatDate(property.renovation_completed_at) ?? "(no timestamp)"}.
+            Card auto-hides from the board after 24h; auto-close cron closes
+            the property after 2 days.
+          </div>
+          {property.renovation_complete_note ? (
+            <div className="mb-3 rounded-md border bg-card px-3 py-2 text-sm">
+              {property.renovation_complete_note}
+            </div>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            <form action={closeAction}>
+              <button
+                type="submit"
+                className="rounded-md border border-emerald-500/40 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:hover:bg-emerald-950/50"
+              >
+                Mark Closed now
+              </button>
+            </form>
+            <form action={undoRenovationCompleteAction}>
+              <input type="hidden" name="slug" value={property.slug} />
+              <button
+                type="submit"
+                className="rounded-md border border-input bg-card px-3 py-1.5 text-sm hover:bg-accent"
+                title="Clear the completion timestamp and note; card returns to standard Contract Work tint"
+              >
+                Undo renovation complete
+              </button>
+            </form>
+          </div>
+        </section>
+      ) : null}
+
+      <section className="rounded-lg border border-rose-500/30 bg-rose-50/30 p-4 dark:bg-rose-950/10">
+        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-rose-700 dark:text-rose-400">
+          Lifecycle
+        </h2>
+
+        <form action={cancelPropertyAction} className="space-y-2">
+          <input type="hidden" name="slug" value={property.slug} />
+          <label className="block text-xs text-muted-foreground" htmlFor="reason">
+            Cancel this property — what happened? (required, min 5 chars)
+          </label>
+          <textarea
+            id="reason"
+            name="reason"
+            required
+            minLength={5}
+            rows={2}
+            placeholder="Seller backed out, inspection killed it, exec rejected, etc."
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          />
+          <button
+            type="submit"
+            className="rounded-md border border-rose-500/40 bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100 dark:bg-rose-950/30 dark:hover:bg-rose-950/50"
+          >
+            Cancel Property
+          </button>
+        </form>
+      </section>
+    </>
+  );
+}
+
+function RenovationCompleteForm({ slug }: { slug: string }) {
+  return (
+    <section className="rounded-lg border border-emerald-500/30 bg-emerald-50/40 p-4 dark:bg-emerald-950/15">
+      <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+        Renovation Complete
+      </h2>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Flags this property as renovation-complete. Card stays in Contract
+        Work with a darker emerald tint, then hides from the board 24h later.
+        Auto-close cron closes the property after 2 days.
+      </p>
+      <form action={markRenovationCompleteAction} className="space-y-2">
+        <input type="hidden" name="slug" value={slug} />
+        <label className="block text-xs text-muted-foreground" htmlFor="note">
+          Completion note (required, min 5 chars)
         </label>
         <textarea
-          id="reason"
-          name="reason"
+          id="note"
+          name="note"
           required
           minLength={5}
           rows={2}
-          placeholder="Seller backed out, inspection killed it, exec rejected, etc."
+          placeholder="Final walk passed, photos uploaded, lockbox combo 1234, ready for agent…"
           className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
         />
         <button
           type="submit"
-          className="rounded-md border border-rose-500/40 bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100 dark:bg-rose-950/30 dark:hover:bg-rose-950/50"
+          className="rounded-md border border-emerald-500/40 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:hover:bg-emerald-950/50"
         >
-          Cancel Property
+          Mark Renovation Complete
         </button>
       </form>
     </section>

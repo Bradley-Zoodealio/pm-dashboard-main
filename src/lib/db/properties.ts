@@ -35,6 +35,8 @@ export interface PropertyRow {
   accounting_address_folder_id: string | null;
   pm_review_folder_id: string | null;
   renovation_folder_id: string | null;
+  renovation_complete_note: string | null;
+  renovation_completed_at: string | null;
   stage_changed_at: string;
   cancelled_at: string | null;
   cancelled_reason: string | null;
@@ -67,15 +69,15 @@ export async function listProperties(): Promise<PropertyRow[]> {
 }
 
 // Active properties suitable for tying a fresh bid draft to. Excludes
-// ready-for-listing (renovation already done) since you don't compose new
-// bids for a property that's gone to market.
+// renovation-completed properties (renovation already done) since you don't
+// compose new bids for one that's already on its way to closing.
 export async function listActiveProperties(): Promise<
   Array<Pick<PropertyRow, "id" | "slug" | "address" | "stage" | "assignee">>
 > {
   const { data, error } = await getSupabase()
     .from("properties")
     .select("id, slug, address, stage, assignee")
-    .neq("stage", "ready-for-listing")
+    .is("renovation_completed_at", null)
     .order("inspect_date", { ascending: false, nullsFirst: true });
   if (error) throw error;
   return (data ?? []) as Array<Pick<PropertyRow, "id" | "slug" | "address" | "stage" | "assignee">>;

@@ -1,4 +1,8 @@
 // Pipeline stages drive the Kanban board columns and stage progression.
+// Renovation completion is tracked via renovation_completed_at on the
+// property row, not a stage transition — the card stays in Contract Work
+// (tinted differently) until the 24h board filter hides it, then the cron
+// auto-closes after 2 days.
 export const STAGES = [
   { id: "inspection-received", label: "Inspection Received" },
   { id: "inspection-under-review", label: "Inspection Under Review" },
@@ -6,7 +10,6 @@ export const STAGES = [
   { id: "addendum-sent", label: "Addendum Sent" },
   { id: "title", label: "Title" },
   { id: "contract-work", label: "Contract Work" },
-  { id: "ready-for-listing", label: "Ready for Listing" },
 ] as const;
 
 // Terminal stages are valid stage values but never render as board columns.

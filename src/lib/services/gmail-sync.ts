@@ -570,7 +570,6 @@ export async function scanForPipelineChanges(
     "addendum-sent": 3,
     title: 4,
     "contract-work": 5,
-    "ready-for-listing": 6,
   };
   const adds = plan.filter((p): p is PlanItemAdd => p.type === "add");
   const other = plan.filter((p) => p.type !== "add");

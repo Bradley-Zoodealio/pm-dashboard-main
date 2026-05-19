@@ -41,7 +41,7 @@ function Column({
   return (
     <section
       data-stage={stageId}
-      className="flex w-72 shrink-0 flex-col gap-2 rounded-lg border border-border bg-card p-2 shadow-sm"
+      className="flex min-w-72 flex-1 flex-col gap-2 rounded-lg border border-border bg-card p-2 shadow-sm"
     >
       <header className="flex items-center justify-between rounded-md bg-[color:var(--brand-blue-tint)] px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-[color:var(--brand-blue)]">
         <span>{label}</span>

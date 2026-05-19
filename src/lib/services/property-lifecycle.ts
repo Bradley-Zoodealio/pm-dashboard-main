@@ -68,17 +68,80 @@ export async function restoreFromTerminalService(args: {
   if (error) throw new Error(`restore update failed: ${error.message}`);
 }
 
-// Cron-side helper: properties stuck in ready-for-listing past the cutoff
-// get auto-closed. Uses stage_changed_at (not updated_at).
+// Mark renovation complete: flags the property as done WITHOUT changing
+// stage. The board hides the card 24h after this timestamp; the auto-close
+// cron closes it after 2 days. Only callable from contract-work.
+export async function markRenovationCompleteService(args: {
+  slug: string;
+  note: string;
+}): Promise<void> {
+  const note = args.note.trim();
+  if (note.length < 5) {
+    throw new Error("Completion note must be at least 5 characters.");
+  }
+
+  const property = await getPropertyBySlug(args.slug);
+  if (!property) throw new Error(`Property not found: ${args.slug}`);
+  if (property.stage !== "contract-work") {
+    throw new Error(
+      `Can only mark renovation complete from contract-work (currently: ${property.stage}).`,
+    );
+  }
+  if (property.renovation_completed_at) {
+    throw new Error(
+      `Renovation already marked complete at ${property.renovation_completed_at}.`,
+    );
+  }
+
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("properties")
+    .update({
+      renovation_completed_at: new Date().toISOString(),
+      renovation_complete_note: note,
+    })
+    .eq("slug", args.slug);
+  if (error)
+    throw new Error(`mark renovation complete failed: ${error.message}`);
+}
+
+// Undo a renovation-complete mark: clears the completion timestamp + note
+// so the card returns to the active board with the standard contract-work
+// tint. Stage doesn't move (it was contract-work the whole time).
+export async function undoRenovationCompleteService(args: {
+  slug: string;
+}): Promise<void> {
+  const property = await getPropertyBySlug(args.slug);
+  if (!property) throw new Error(`Property not found: ${args.slug}`);
+  if (!property.renovation_completed_at) {
+    throw new Error(`Renovation is not marked complete for ${args.slug}.`);
+  }
+
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("properties")
+    .update({
+      renovation_completed_at: null,
+      renovation_complete_note: null,
+    })
+    .eq("slug", args.slug);
+  if (error)
+    throw new Error(`undo renovation complete failed: ${error.message}`);
+}
+
+// Cron-side helper: properties whose renovation was completed past the
+// cutoff get auto-closed. Stage is still contract-work; the cron flips it
+// straight to closed.
 export async function findAutoCloseCandidates(
   cutoff: Date,
 ): Promise<Array<{ slug: string }>> {
   const sb = getSupabase();
   const { data, error } = await sb
     .from("properties")
-    .select("slug, stage_changed_at")
-    .eq("stage", "ready-for-listing")
-    .lt("stage_changed_at", cutoff.toISOString());
+    .select("slug, renovation_completed_at")
+    .eq("stage", "contract-work")
+    .not("renovation_completed_at", "is", null)
+    .lt("renovation_completed_at", cutoff.toISOString());
   if (error) throw new Error(`auto-close query failed: ${error.message}`);
   return (data ?? []) as Array<{ slug: string }>;
 }
