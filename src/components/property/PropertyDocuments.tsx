@@ -1,7 +1,6 @@
 import {
-  ensurePropertyFolder,
-  listFilesInDocsFolder,
-  type DriveFileRow,
+  listPropertyDriveFiles,
+  type DriveFileGroup,
 } from "@/lib/google/drive";
 import type { PropertyRow } from "@/lib/db/properties";
 
@@ -29,34 +28,70 @@ export async function PropertyDocuments({ property }: { property: PropertyRow })
       .filter((x): x is string => !!x),
   );
 
-  let folderId = property.drive_folder_id;
-  let files: DriveFileRow[] = [];
+  let groups: DriveFileGroup[] = [];
   let error: string | null = null;
   try {
-    // Lazy creation: if the property has never had a Drive op, this creates
-    // Properties/<address>/ now so the Documents list has a stable home.
-    if (!folderId) folderId = await ensurePropertyFolder(property.slug);
-    files = await listFilesInDocsFolder(folderId);
+    groups = await listPropertyDriveFiles(property.slug);
   } catch (err) {
     error = (err as Error).message;
   }
 
-  const visible = files.filter((f) => !linkedIds.has(f.id));
+  // Filter out already-linked files from each group; drop empty groups whose
+  // folder doesn't even exist yet (folderUrl === null AND files === []).
+  const visibleGroups = groups
+    .map((g) => ({ ...g, files: g.files.filter((f) => !linkedIds.has(f.id)) }))
+    .filter((g) => g.folderUrl !== null || g.files.length > 0);
+
+  const totalFiles = visibleGroups.reduce((n, g) => n + g.files.length, 0);
 
   return (
     <section className="rounded-lg border border-border bg-card p-4">
-      <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">
+      <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted-foreground">
         Documents
       </h2>
       {error ? (
         <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
-      ) : visible.length === 0 ? (
+      ) : totalFiles === 0 && visibleGroups.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No additional files in this property&apos;s Drive folder yet.
+          No Drive folders linked yet. Create a Comps Sheet, Remodel Bid, or
+          Project Tracker above to start populating this section.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {visibleGroups.map((g) => (
+            <DriveGroup key={g.group} group={g} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DriveGroup({ group }: { group: DriveFileGroup }) {
+  return (
+    <div>
+      <div className="mb-1 flex items-baseline justify-between gap-2 text-xs">
+        <span className="font-medium uppercase tracking-wide text-muted-foreground">
+          {group.group}
+        </span>
+        {group.folderUrl ? (
+          <a
+            href={group.folderUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-muted-foreground hover:underline"
+          >
+            Open folder ↗
+          </a>
+        ) : null}
+      </div>
+      {group.files.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          {group.folderUrl ? "Empty." : "Not created yet."}
         </p>
       ) : (
         <ul className="flex flex-col gap-1 text-sm">
-          {visible.map((f) => (
+          {group.files.map((f) => (
             <li key={f.id} className="flex items-center justify-between gap-3">
               <a
                 href={f.webViewLink}
@@ -80,6 +115,6 @@ export async function PropertyDocuments({ property }: { property: PropertyRow })
           ))}
         </ul>
       )}
-    </section>
+    </div>
   );
 }

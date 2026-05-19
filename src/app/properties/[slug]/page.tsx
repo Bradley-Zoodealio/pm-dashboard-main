@@ -84,6 +84,8 @@ export default async function PropertyPage({
         comps_url={property.comps_url}
         remodel_bid_url={property.remodel_bid_url}
         project_tracker_url={property.project_tracker_url}
+        accounting_address_folder_id={property.accounting_address_folder_id}
+        renovation_folder_id={property.renovation_folder_id}
       />
       <PropertyDrafts propertyId={property.id} propertySlug={property.slug} />
       <PropertyLinks property={property} />

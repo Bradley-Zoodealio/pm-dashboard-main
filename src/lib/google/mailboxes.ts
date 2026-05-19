@@ -1,4 +1,4 @@
-export type MailboxKey = "bradley" | "tih-contracts" | "tih-pm";
+export type MailboxKey = "bradley" | "tih-contracts" | "tih-pm" | "tih-accounting";
 
 export type MailboxPurpose =
   | "inspection-reports"
@@ -38,6 +38,12 @@ export const MAILBOXES: Record<MailboxKey, Mailbox> = {
   "tih-pm": {
     email: "pm@tradeinholdings.com",
     label: "TIH PM",
+    purposes: ["drive-operations"],
+    scopes: [DRIVE, SHEETS],
+  },
+  "tih-accounting": {
+    email: "accounting@tradeinholdings.com",
+    label: "TIH Accounting",
     purposes: ["drive-operations"],
     scopes: [DRIVE, SHEETS],
   },

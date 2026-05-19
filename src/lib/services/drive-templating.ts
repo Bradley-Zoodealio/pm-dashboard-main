@@ -2,11 +2,12 @@ import "server-only";
 
 import {
   copyTemplate,
-  ensureDocsSubfolder,
-  ensurePropertyFolder,
+  ensurePmReviewFolder,
+  ensureRenovationFolder,
   findFileByNameInFolder,
   type DriveFileResult,
 } from "@/lib/google/drive";
+import type { MailboxKey } from "@/lib/google/mailboxes";
 import {
   getPropertyBySlug,
   updatePropertyField,
@@ -25,6 +26,10 @@ interface TemplateConfig {
   envVar: string;
   fileNameFor(address: string): string;
   field: PropertyField;
+  // Which Drive account owns the destination folder. Comps + Remodel Bid land
+  // in the accounting Drive's PM Review/; Project Tracker stays in pm@.
+  mailbox: MailboxKey;
+  resolveFolderId(slug: string): Promise<string>;
 }
 
 const CONFIGS: Record<TemplateKind, TemplateConfig> = {
@@ -32,16 +37,22 @@ const CONFIGS: Record<TemplateKind, TemplateConfig> = {
     envVar: "DRIVE_TEMPLATE_FILE_ID",
     fileNameFor: (a) => `Comps - ${a}`,
     field: "comps_url",
+    mailbox: "tih-accounting",
+    resolveFolderId: ensurePmReviewFolder,
   },
   "remodel-bid": {
     envVar: "DRIVE_REMODEL_BID_TEMPLATE_FILE_ID",
     fileNameFor: (a) => `Remodel Bid - ${a}`,
     field: "remodel_bid_url",
+    mailbox: "tih-accounting",
+    resolveFolderId: ensurePmReviewFolder,
   },
   "project-tracker": {
     envVar: "DRIVE_PROJECT_TRACKER_TEMPLATE_FILE_ID",
     fileNameFor: (a) => `Project Tracker - ${a}`,
     field: "project_tracker_url",
+    mailbox: "tih-pm",
+    resolveFolderId: ensureRenovationFolder,
   },
 };
 
@@ -54,9 +65,11 @@ function existingUrl(property: PropertyRow, kind: TemplateKind): string | null {
 // Resolve a property's Drive artifact (Comps / Remodel Bid / Project Tracker).
 // Order of preference:
 //   1. URL already linked on the property row — reuse.
-//   2. A file with the canonical name already in Properties/<addr>/Docs/ — link + reuse.
-//   3. Otherwise, copy the template into Docs/.
-// Folders are created lazily via ensurePropertyFolder + ensureDocsSubfolder.
+//   2. A file with the canonical name already in the destination folder — link + reuse.
+//   3. Otherwise, copy the template into the destination folder.
+// Destination folder is resolved per-kind:
+//   - Comps + Remodel Bid → accounting Drive's PM Review/ via ensurePmReviewFolder
+//   - Project Tracker → pm@ Drive's Active/<address>/ via ensureRenovationFolder
 export async function ensureDriveTemplate(
   slug: string,
   kind: TemplateKind,
@@ -75,19 +88,27 @@ export async function ensureDriveTemplate(
     return { url: linked, reused: "linked" };
   }
 
-  const propertyFolderId = await ensurePropertyFolder(slug);
-  const docsFolderId = await ensureDocsSubfolder(propertyFolderId);
+  const destinationFolderId = await cfg.resolveFolderId(slug);
   const targetName = cfg.fileNameFor(property.address);
 
   let resolved: DriveFileResult;
   let reusedFromDrive = false;
 
-  const existing = await findFileByNameInFolder(docsFolderId, targetName);
+  const existing = await findFileByNameInFolder(
+    destinationFolderId,
+    targetName,
+    cfg.mailbox,
+  );
   if (existing) {
     resolved = existing;
     reusedFromDrive = true;
   } else {
-    resolved = await copyTemplate(templateId, targetName, docsFolderId);
+    resolved = await copyTemplate(
+      templateId,
+      targetName,
+      destinationFolderId,
+      cfg.mailbox,
+    );
   }
 
   await updatePropertyField(slug, cfg.field, resolved.webViewLink as never);
