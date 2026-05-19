@@ -18,13 +18,13 @@ The restructure consolidates company-wide artifacts (Comps Report, Remodel Bid) 
 |---|---|
 | Accounting Drive account | New `tih-accounting` mailbox (`accounting@tradeinholdings.com`). Drive + Sheets scope. Standard OAuth bootstrap via `/admin/oauth`. |
 | PM Drive account | Existing `tih-pm` mailbox, narrowed to renovation Drive ops only. |
-| Accounting layout | `2026 Acquisition & Disposition/<address>/Acquisitions/PM Review/` — we create only `PM Review/`. Parent + `Acquisitions/` assumed pre-created by the deal team. |
+| Accounting layout | `2026 Acquisition & Disposition Files/<address>/Acquisitions/PM Review/` — we create only `PM Review/`. Parent + `Acquisitions/` assumed pre-created by the deal team. |
 | Comps + Bid location | Inside `PM Review/`. |
 | PM layout | `Renovations/2026 Renovations/Active/<address>/` with 6 subfolders: Change Orders, Contractor Bid, Photos, Contractor Agreement, Hola Bid, Payment Receipts. |
 | Project Tracker location | At the root of the `Active/<address>/` folder (sibling to the 6 subfolders). |
 | Address matching | Fuzzy via `extractAddressTokens` (street number + first street word). One match → use silently. Zero or 2+ → URL-paste modal showing the attempted search terms. |
 | PM Review creation | Lazy — on first "Create Comps Sheet" or "Create Remodel Bid" click. |
-| Renovation parent creation | Lazy on Contract Work transition. Fuzzy-match first; create if missing using the TASKS.md address verbatim. |
+| Renovation parent creation | Lazy on Contract Work transition. Fuzzy-match first; create if missing using the property's `address` column verbatim. |
 | 6 subfolders | All created defensively (`ensureFolder`) at the same moment as the renovation parent. Idempotent if any already exist. |
 | Year resolution — Accounting | Search current year, fall back to previous year. No persisted year. |
 | Year resolution — Renovation | Use current year on first creation. Once `renovation_folder_id` is stored, year is irrelevant. |
@@ -43,7 +43,7 @@ In `accounting@tradeinholdings.com`'s Drive, confirm there's a `Templates/` fold
 
 ### 3.2 Confirm `accounting@` Drive layout
 
-Verify the path exists exactly as: `2026 Acquisition & Disposition/<some property address>/Acquisitions/`. The migration script assumes both `2026 Acquisition & Disposition/` and `Acquisitions/` are present for every active property. If naming drifted (e.g. some folders titled `2026 A&D`), normalize manually before running the migration.
+Verify the path exists exactly as: `2026 Acquisition & Disposition Files/<some property address>/Acquisitions/`. The migration script assumes both `2026 Acquisition & Disposition Files/` and `Acquisitions/` are present for every active property. If naming drifted (e.g. some folders titled `2026 A&D`), normalize manually before running the migration.
 
 ### 3.3 Confirm `pm@` Drive renovation layout
 
@@ -104,7 +104,7 @@ Confirm `Renovations/2026 Renovations/Active/` exists at the root of `pm@`'s My 
 
 **Files:**
 - `src/lib/google/drive.ts` —
-  - `ensureRenovationFolder(slug)`: returns the renovation `Active/<address>/` folder ID. Read from row first. If null: walk `Renovations/<year> Renovations/Active/` (current year, then previous), fuzzy-match. One match → persist + return. Zero matches → create with TASKS.md address verbatim in the current year's `Active/`. 2+ → throw `RenovationFolderAmbiguous`. Then call `ensureRenovationSubfolders(folderId)`.
+  - `ensureRenovationFolder(slug)`: returns the renovation `Active/<address>/` folder ID. Read from row first. If null: walk `Renovations/<year> Renovations/Active/` (current year, then previous), fuzzy-match. One match → persist + return. Zero matches → create with the property's `address` column verbatim in the current year's `Active/`. 2+ → throw `RenovationFolderAmbiguous`. Then call `ensureRenovationSubfolders(folderId)`.
   - `ensureRenovationSubfolders(folderId)`: idempotent `ensureFolder` call for each of the six fixed names. Order in code: Change Orders, Contractor Bid, Photos, Contractor Agreement, Hola Bid, Payment Receipts (Drive will sort however the viewer has it set).
 
 **Verification:** Move a test property to Contract Work, click "Create Project Tracker," confirm the Active folder + 6 subfolders + Project Tracker file all exist.
@@ -155,7 +155,7 @@ Confirm `Renovations/2026 Renovations/Active/` exists at the root of `pm@`'s My 
 
 ### Task #9 — One-time migration script
 
-**Scope:** Walk every property in TASKS.md (or `properties` table — pick one source) and move existing artifacts into the new structure.
+**Scope:** Walk every property in the `properties` table and move existing artifacts into the new structure.
 
 **Files:**
 - `scripts/migrate-drive-layout.ts` — for each property:
@@ -172,11 +172,21 @@ Confirm `Renovations/2026 Renovations/Active/` exists at the root of `pm@`'s My 
 
 **Scope:** Remove legacy code paths that are now unreachable.
 
-**Files:**
-- `src/lib/google/drive.ts` — remove `ensurePropertyFolder`, `ensureDocsSubfolder`, `propertiesRootCache`, `docsFolderCache` (if unreferenced post-migration), `findFilesForAddress` if no caller remains. `findFileByNameInFolder` stays — used by templating dedup.
-- Audit for any remaining references to "Docs" subfolder semantics in components/services.
+**Removed:**
+- `listFilesInDocsFolder` — superseded by `listPropertyDriveFiles` in Task #6, no callers.
+- `findFilesForAddress` — no callers; replaced years ago by `listFilesInDocsFolder` and now also by `listPropertyDriveFiles`.
 
-**Verification:** Type-check + grep for removed symbol names returns clean. App still boots end-to-end.
+**Kept (still has callers):**
+- `ensurePropertyFolder`, `ensureDocsSubfolder`, `propertiesRootCache`, `docsFolderCache` — `src/lib/services/cma-copy.ts` still uses them. Removed when CMA migration follow-up rewires that path.
+- `findTemplateCopiesForAddress` — used by `scripts/smoke-drive.ts` for dev-time Drive search.
+- `listRemodelBidSheets` — used by `src/lib/services/bid-scraper.ts` for the PDF-first bid backfill.
+- `findFileByNameInFolder` — used by templating dedup (Task #5).
+
+**Deferred to CMA follow-up:**
+- Drop `properties.drive_folder_id` column. Currently still read+written by `ensurePropertyFolder` (CMA path) and used as a heuristic in `gmail-sync.ts` for the CMA copy proposal.
+- Remove the `drive_folder_id` field from `PropertyRow` and `PropertyInsert` types.
+
+**Verification:** Type-check clean. App still boots end-to-end.
 
 ---
 
@@ -187,7 +197,17 @@ Confirm `Renovations/2026 Renovations/Active/` exists at the root of `pm@`'s My 
 - **Templates file IDs.** Pre-flight assumption that templates were moved (not copied) preserves IDs. If env vars need updating, do so during Task #5 before testing.
 - **`bradley@` mailbox.** Still a placeholder with empty scopes. Unchanged by this plan.
 
-## 6. Out of scope
+## 6. Follow-up: CMA migration
+
+The CMA copy path (`src/lib/services/cma-copy.ts` + the "copy-cma" plan items in `gmail-sync.ts`) still drops files into the legacy PM-drive `Properties/<addr>/Docs/` location. That folder is invisible to the new Documents tab — users see the CMA only via the `cma_url` button on the property row.
+
+A future follow-up should:
+1. Route CMA copies into PM Review (alongside Comps + Remodel Bid) by replacing `ensurePropertyFolder` + `ensureDocsSubfolder` with `ensurePmReviewFolder` in `cma-copy.ts`.
+2. Update the gmail-sync heuristic that uses `!existingProp.drive_folder_id` as a "no copy yet" signal. Replace with a better check (e.g. `cma_url` not yet pointing at a Drive copy, or a dedicated `cma_copied_at` column).
+3. Drop `properties.drive_folder_id` once the column has no readers.
+4. Delete `ensurePropertyFolder`, `ensureDocsSubfolder`, and their caches from `drive.ts`.
+
+## 7. Out of scope
 
 - Cross-drive file mirroring (the company copy of the Remodel Bid lives only in Accounting; PM does not keep a duplicate).
 - Surfacing Acquisitions / Disposition / Insurance contents in the Documents tab.
