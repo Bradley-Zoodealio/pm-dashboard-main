@@ -6,7 +6,9 @@ import { z } from "zod";
 import {
   cancelPropertyService,
   closePropertyService,
+  markRenovationCompleteService,
   restoreFromTerminalService,
+  undoRenovationCompleteService,
 } from "@/lib/services/property-lifecycle";
 import { STAGES, type PipelineStageId } from "@/lib/services/stages";
 
@@ -29,6 +31,23 @@ export async function closePropertyAction(slug: string): Promise<void> {
   const checkedSlug = slugSchema.parse(slug);
   await closePropertyService(checkedSlug);
   revalidateAfterTransition(checkedSlug);
+}
+
+export async function markRenovationCompleteAction(
+  formData: FormData,
+): Promise<void> {
+  const slug = slugSchema.parse(formData.get("slug"));
+  const note = String(formData.get("note") ?? "");
+  await markRenovationCompleteService({ slug, note });
+  revalidateAfterTransition(slug);
+}
+
+export async function undoRenovationCompleteAction(
+  formData: FormData,
+): Promise<void> {
+  const slug = slugSchema.parse(formData.get("slug"));
+  await undoRenovationCompleteService({ slug });
+  revalidateAfterTransition(slug);
 }
 
 export async function restoreFromTerminalAction(

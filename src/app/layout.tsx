@@ -3,6 +3,7 @@ import { Roboto, Roboto_Mono } from "next/font/google";
 import "./globals.css";
 import { TopNav } from "@/components/TopNav";
 import { BrandMark } from "@/components/BrandMark";
+import { RefreshOnFocus } from "@/components/RefreshOnFocus";
 
 const roboto = Roboto({
   variable: "--font-sans",
@@ -37,6 +38,7 @@ export default function RootLayout({
           <TopNav />
         </header>
         <div className="flex flex-1 flex-col">{children}</div>
+        <RefreshOnFocus />
       </body>
     </html>
   );

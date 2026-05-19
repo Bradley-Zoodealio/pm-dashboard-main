@@ -1,8 +1,10 @@
 import { showCountdown } from "./stages";
 
 // One card state → one tint. Green is reserved for "advanced" so it can never
-// collide with the countdown scale.
-export type Tint = "passed" | "urgent" | "warning" | "healthy" | "advanced";
+// collide with the countdown scale. "complete" is a deeper, more saturated
+// green reserved for ready-for-listing — the renovation is done, the card is
+// fading off the board within 24h.
+export type Tint = "passed" | "urgent" | "warning" | "healthy" | "advanced" | "complete";
 
 export interface TintStyle {
   /** Background wash (~10% alpha so the surface stays readable). */
@@ -51,6 +53,12 @@ export const TINT_STYLES: Record<Tint, TintStyle> = {
     dot: "bg-emerald-500",
     label: "text-emerald-700 dark:text-emerald-300",
   },
+  complete: {
+    bg: "bg-emerald-300/70 dark:bg-emerald-800/50",
+    beforeStripe: "before:bg-emerald-700",
+    dot: "bg-emerald-700",
+    label: "text-emerald-900 dark:text-emerald-100",
+  },
 };
 
 export function daysUntil(date: string | null): number | null {
@@ -71,7 +79,14 @@ export function formatInspectDate(date: string | null): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-export function tintForProperty(stage: string, inspectDate: string | null): Tint {
+export function tintForProperty(
+  stage: string,
+  inspectDate: string | null,
+  renovationCompletedAt: string | null = null,
+): Tint {
+  // Renovation marked complete → distinct saturated emerald until the 24h
+  // board filter hides the card. Stage is still contract-work.
+  if (renovationCompletedAt) return "complete";
   // Past Exec Final Review → green, regardless of inspect date.
   if (!showCountdown(stage)) return "advanced";
   const daysOut = daysUntil(inspectDate);

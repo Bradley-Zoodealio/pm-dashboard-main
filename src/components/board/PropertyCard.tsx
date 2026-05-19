@@ -22,7 +22,14 @@ function formatMoney(cents: number | null): string {
 
 export function PropertyCard({ property }: { property: PropertyRow }) {
   const countdown = showCountdown(property.stage) ? daysUntil(property.inspect_date) : null;
-  const tint = TINT_STYLES[tintForProperty(property.stage, property.inspect_date)];
+  const tint =
+    TINT_STYLES[
+      tintForProperty(
+        property.stage,
+        property.inspect_date,
+        property.renovation_completed_at,
+      )
+    ];
 
   return (
     <Card

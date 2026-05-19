@@ -20,7 +20,14 @@ export default async function Page({
     error = (err as Error).message;
   }
 
-  let filtered = properties;
+  // Hide renovation-completed cards from the active board 24h after the
+  // mark-complete timestamp. The property stays in contract-work; the
+  // auto-close cron will close it on day 2.
+  const completeCutoff = Date.now() - 24 * 60 * 60 * 1000;
+  let filtered = properties.filter((p) => {
+    if (!p.renovation_completed_at) return true;
+    return new Date(p.renovation_completed_at).getTime() >= completeCutoff;
+  });
   if (assignee) {
     filtered = filtered.filter((p) => (p.assignee ?? "Unassigned") === assignee);
   }
